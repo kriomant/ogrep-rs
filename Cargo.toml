@@ -1,0 +1,7 @@
+[package]
+authors = ["Mikhail Trishchenkov <kriomant@gmail.com>"]
+name = "ogrep"
+version = "0.1.0"
+
+[dependencies]
+clap = "2.30.0"
