@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::io::BufRead;
 use std::io::Write;
 use itertools::Itertools;
+use std::os::unix::ffi::OsStrExt;
 
 enum InputSpec {
     File(PathBuf),
@@ -59,11 +60,13 @@ struct Options {
     input: InputSpec,
     use_colors: UseColors,
     breaks: bool,
+    print_filename: bool,
 }
 
 struct AppearanceOptions {
     use_colors: bool,
     breaks: bool,
+    print_filename: bool,
 }
 
 struct Printer {
@@ -101,6 +104,20 @@ impl Printer {
             println!();
         }
     }
+
+    fn print_filename(&self, filename: &std::path::Path) {
+        if self.options.print_filename {
+            let mut stdout = std::io::stdout();
+            stdout.write(b"\n").unwrap();
+            if self.options.use_colors {
+                let style = ansi_term::Style::new().underline();
+                style.paint(filename.as_os_str().as_bytes()).write_to(&mut stdout).unwrap();
+            } else {
+                stdout.write_all(filename.as_os_str().as_bytes()).unwrap();
+            }
+            stdout.write(b"\n\n").unwrap();
+        }
+    }
 }
 
 fn parse_arguments() -> Options {
@@ -126,6 +143,9 @@ fn parse_arguments() -> Options {
         .arg(Arg::with_name("no-breaks")
             .long("no-breaks")
             .help("Don't preserve line breaks"))
+        .arg(Arg::with_name("print-filename")
+            .long("print-filename")
+            .help("Print filename on match"))
         .get_matches();
 
     Options {
@@ -136,6 +156,7 @@ fn parse_arguments() -> Options {
         },
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
         breaks: !matches.is_present("no-breaks"),
+        print_filename: matches.is_present("print-filename"),
     }
 }
 
@@ -149,7 +170,7 @@ struct ContextEntry {
     line: String,
 }
 
-fn process_input(input: &mut BufRead, pattern: &str, printer: &Printer) -> std::io::Result<()> {
+fn process_input(input: &mut BufRead, pattern: &str, input_spec: &InputSpec, printer: &Printer) -> std::io::Result<()> {
     let mut context = Vec::new();
 
     // Whether at least one match was already found.
@@ -173,6 +194,11 @@ fn process_input(input: &mut BufRead, pattern: &str, printer: &Printer) -> std::
 
         if line.contains(pattern) {
             // `match_found` is checked to avoid extra line break before first match.
+            if !match_found {
+                if let &InputSpec::File(ref path) = input_spec {
+                    printer.print_filename(path)
+                }
+            }
             if was_empty_line && match_found {
                 printer.print_break();
             }
@@ -203,13 +229,14 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
             UseColors::Auto => atty::is(atty::Stream::Stdout),
         },
         breaks: options.breaks,
+        print_filename: options.print_filename,
     };
 
     let printer = Printer { options: appearance };
 
     let mut input = Input::open(&options.input)?;
     let mut input_lock = input.lock();
-    process_input(input_lock.as_buf_read(), &options.pattern, &printer)?;
+    process_input(input_lock.as_buf_read(), &options.pattern, &options.input, &printer)?;
     Ok(0)
 }
 
