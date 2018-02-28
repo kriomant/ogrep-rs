@@ -4,4 +4,6 @@ name = "ogrep"
 version = "0.1.0"
 
 [dependencies]
+ansi_term = "0.10.2"
+atty = "0.2.6"
 clap = "2.30.0"

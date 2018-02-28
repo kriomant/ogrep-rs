@@ -1,4 +1,6 @@
-extern crate clap;
+extern crate atty;
+#[macro_use] extern crate clap;
+extern crate ansi_term;
 
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -45,13 +47,46 @@ impl<'a> InputLock<'a> {
     }
 }
 
+arg_enum!{
+    #[derive(Debug)]
+    pub enum UseColors { Always, Auto, Never }
+}
+
 struct Options {
     pattern: String,
     input: InputSpec,
+    use_colors: UseColors,
+}
+
+struct AppearanceOptions {
+    use_colors: bool,
+}
+
+struct Printer {
+    options: AppearanceOptions,
+}
+impl Printer {
+    fn print_context(&self, line: &str) {
+        if self.options.use_colors {
+            println!("{}", ansi_term::Style::new().dimmed().paint(line));
+        } else {
+            println!("{}", line);
+        }
+    }
+
+    fn print_match(&self, line: &str) {
+        if self.options.use_colors {
+            println!("{}", ansi_term::Style::new().bold().paint(line));
+        } else {
+            println!("{}", line);
+        }
+    }
 }
 
 fn parse_arguments() -> Options {
     use clap::{App, Arg};
+
+    let colors_default = UseColors::Auto.to_string();
 
     let matches = App::new("ogrep")
         .about("Outline grep")
@@ -61,6 +96,13 @@ fn parse_arguments() -> Options {
             .required(true))
         .arg(Arg::with_name("input")
             .help("File to search in"))
+        .arg(Arg::with_name("color")
+            .long("color")
+            .takes_value(true)
+            .default_value(&colors_default)
+            .possible_values(&UseColors::variants())
+            .case_insensitive(true)
+            .help("File to search in"))
         .get_matches();
 
     Options {
@@ -68,7 +110,8 @@ fn parse_arguments() -> Options {
         input: match matches.value_of_os("input").unwrap_or(OsStr::new("-")) {
           path if path == "-" => InputSpec::Stdin,
           path => InputSpec::File(PathBuf::from(path)),
-        }
+        },
+        use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
     }
 }
 
@@ -76,7 +119,7 @@ fn calculate_indentation(s: &str) -> Option<usize> {
     s.find(|c: char| !c.is_whitespace())
 }
 
-fn process_input(input: &mut BufRead, pattern: &str) -> std::io::Result<()> {
+fn process_input(input: &mut BufRead, pattern: &str, printer: &Printer) -> std::io::Result<()> {
     let mut context = Vec::new();
 
     for line in input.lines() {
@@ -91,9 +134,9 @@ fn process_input(input: &mut BufRead, pattern: &str) -> std::io::Result<()> {
 
         if line.contains(pattern) {
             for &(_, ref context_line) in &context {
-                println!("{}", context_line);
+                printer.print_context(context_line);
             }
-            println!("{}", line);
+            printer.print_match(&line);
             context.clear();
         } else {
             context.push((indentation, line))
@@ -105,9 +148,20 @@ fn process_input(input: &mut BufRead, pattern: &str) -> std::io::Result<()> {
 
 fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
     let options = parse_arguments();
+
+    let appearance = AppearanceOptions {
+        use_colors: match options.use_colors {
+            UseColors::Always => true,
+            UseColors::Never => false,
+            UseColors::Auto => atty::is(atty::Stream::Stdout),
+        },
+    };
+
+    let printer = Printer { options: appearance };
+
     let mut input = Input::open(&options.input)?;
     let mut input_lock = input.lock();
-    process_input(input_lock.as_buf_read(), &options.pattern)?;
+    process_input(input_lock.as_buf_read(), &options.pattern, &printer)?;
     Ok(0)
 }
 
