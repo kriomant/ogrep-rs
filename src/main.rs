@@ -1,12 +1,14 @@
 extern crate atty;
 #[macro_use] extern crate clap;
 extern crate ansi_term;
+extern crate itertools;
 
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use std::io::BufRead;
 use std::io::Write;
+use itertools::Itertools;
 
 enum InputSpec {
     File(PathBuf),
@@ -74,9 +76,17 @@ impl Printer {
         }
     }
 
-    fn print_match(&self, line: &str) {
+    fn print_match(&self, line: &str, pattern: &str) {
         if self.options.use_colors {
-            println!("{}", ansi_term::Style::new().bold().paint(line));
+            let dflt_style = ansi_term::Style::new();
+            let match_style = ansi_term::Style::new().bold();
+            let match_str = match_style.paint(pattern);
+
+            line.split(pattern).map(|p| dflt_style.paint(p)).intersperse(match_str).for_each(|p| {
+                print!("{}", p);
+            });
+            print!("\n");
+
         } else {
             println!("{}", line);
         }
@@ -136,7 +146,7 @@ fn process_input(input: &mut BufRead, pattern: &str, printer: &Printer) -> std::
             for &(_, ref context_line) in &context {
                 printer.print_context(context_line);
             }
-            printer.print_match(&line);
+            printer.print_match(&line, pattern);
             context.clear();
         } else {
             context.push((indentation, line))
