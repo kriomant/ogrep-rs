@@ -68,27 +68,29 @@ struct Printer {
     options: AppearanceOptions,
 }
 impl Printer {
-    fn print_context(&self, line: &str) {
+    fn print_context(&self, line_number: usize, line: &str) {
         if self.options.use_colors {
-            println!("{}", ansi_term::Style::new().dimmed().paint(line));
+            let text = format!("{:4}: {}", line_number, line);
+            println!("{}", ansi_term::Style::new().dimmed().paint(text));
         } else {
-            println!("{}", line);
+            println!("{:4}: {}", line_number, line);
         }
     }
 
-    fn print_match(&self, line: &str, pattern: &str) {
+    fn print_match(&self, line_number: usize, line: &str, pattern: &str) {
         if self.options.use_colors {
             let dflt_style = ansi_term::Style::new();
             let match_style = ansi_term::Style::new().bold();
             let match_str = match_style.paint(pattern);
 
+            print!("{:4}: ", line_number);
             line.split(pattern).map(|p| dflt_style.paint(p)).intersperse(match_str).for_each(|p| {
                 print!("{}", p);
             });
             print!("\n");
 
         } else {
-            println!("{}", line);
+            println!("{:4}: {}", line_number, line);
         }
     }
 }
@@ -129,27 +131,33 @@ fn calculate_indentation(s: &str) -> Option<usize> {
     s.find(|c: char| !c.is_whitespace())
 }
 
+struct ContextEntry {
+    line_number: usize,
+    indentation: usize,
+    line: String,
+}
+
 fn process_input(input: &mut BufRead, pattern: &str, printer: &Printer) -> std::io::Result<()> {
     let mut context = Vec::new();
 
-    for line in input.lines() {
+    for (line_number, line) in input.lines().enumerate().map(|(n, l)| (n+1, l)) {
         let line = line?;
         let indentation = match calculate_indentation(&line) {
             Some(ind) => ind,
             None => continue,
         };
 
-        let top = context.iter().rposition(|&(ind, _): &(usize, String)| ind < indentation);
+        let top = context.iter().rposition(|e: &ContextEntry| e.indentation < indentation);
         context.truncate(top.map(|t| t+1).unwrap_or(0));
 
         if line.contains(pattern) {
-            for &(_, ref context_line) in &context {
-                printer.print_context(context_line);
+            for entry in &context {
+                printer.print_context(entry.line_number, &entry.line);
             }
-            printer.print_match(&line, pattern);
+            printer.print_match(line_number, &line, pattern);
             context.clear();
         } else {
-            context.push((indentation, line))
+            context.push(ContextEntry { line_number, indentation, line })
         }
     }
 
