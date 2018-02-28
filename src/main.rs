@@ -58,10 +58,12 @@ struct Options {
     pattern: String,
     input: InputSpec,
     use_colors: UseColors,
+    breaks: bool,
 }
 
 struct AppearanceOptions {
     use_colors: bool,
+    breaks: bool,
 }
 
 struct Printer {
@@ -93,6 +95,12 @@ impl Printer {
             println!("{:4}: {}", line_number, line);
         }
     }
+
+    fn print_break(&self) {
+        if self.options.breaks {
+            println!();
+        }
+    }
 }
 
 fn parse_arguments() -> Options {
@@ -115,6 +123,9 @@ fn parse_arguments() -> Options {
             .possible_values(&UseColors::variants())
             .case_insensitive(true)
             .help("File to search in"))
+        .arg(Arg::with_name("no-breaks")
+            .long("no-breaks")
+            .help("Don't preserve line breaks"))
         .get_matches();
 
     Options {
@@ -124,6 +135,7 @@ fn parse_arguments() -> Options {
           path => InputSpec::File(PathBuf::from(path)),
         },
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
+        breaks: !matches.is_present("no-breaks"),
     }
 }
 
@@ -140,22 +152,39 @@ struct ContextEntry {
 fn process_input(input: &mut BufRead, pattern: &str, printer: &Printer) -> std::io::Result<()> {
     let mut context = Vec::new();
 
+    // Whether at least one match was already found.
+    let mut match_found = false;
+
+    // Whether empty line was met since last match.
+    let mut was_empty_line = false;
+
     for (line_number, line) in input.lines().enumerate().map(|(n, l)| (n+1, l)) {
         let line = line?;
         let indentation = match calculate_indentation(&line) {
             Some(ind) => ind,
-            None => continue,
+            None => {
+                was_empty_line = true;
+                continue;
+            }
         };
 
         let top = context.iter().rposition(|e: &ContextEntry| e.indentation < indentation);
         context.truncate(top.map(|t| t+1).unwrap_or(0));
 
         if line.contains(pattern) {
+            // `match_found` is checked to avoid extra line break before first match.
+            if was_empty_line && match_found {
+                printer.print_break();
+            }
+            was_empty_line = false;
+            match_found = true;
+
             for entry in &context {
                 printer.print_context(entry.line_number, &entry.line);
             }
             printer.print_match(line_number, &line, pattern);
             context.clear();
+
         } else {
             context.push(ContextEntry { line_number, indentation, line })
         }
@@ -173,6 +202,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
             UseColors::Never => false,
             UseColors::Auto => atty::is(atty::Stream::Stdout),
         },
+        breaks: options.breaks,
     };
 
     let printer = Printer { options: appearance };
