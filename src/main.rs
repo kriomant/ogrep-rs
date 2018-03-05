@@ -11,6 +11,14 @@ use std::io::Write;
 use itertools::Itertools;
 use std::os::unix::ffi::OsStrExt;
 
+// This prefixes are used when "smart branches" feature
+// is turned on. When line starts with given prefix, then retain
+// lines with same indentation starting with given prefixes in context.
+const SMART_BRANCH_PREFIXES: &[(&str, &[&str])] = &[
+    ("} else ", &["if ", "} else if "]),
+    ("case ", &["switch "]),
+];
+
 enum InputSpec {
     File(PathBuf),
     Stdin,
@@ -62,6 +70,7 @@ struct Options {
     breaks: bool,
     ellipsis: bool,
     print_filename: bool,
+    smart_branches: bool,
 }
 
 struct AppearanceOptions {
@@ -157,6 +166,9 @@ fn parse_arguments() -> Options {
         .arg(Arg::with_name("print-filename")
             .long("print-filename")
             .help("Print filename on match"))
+        .arg(Arg::with_name("no-smart-branches")
+            .long("no-smart-branches")
+            .help("Don't handle if/if-else/else conditionals specially"))
         .get_matches();
 
     Options {
@@ -169,6 +181,7 @@ fn parse_arguments() -> Options {
         breaks: !matches.is_present("no-breaks"),
         ellipsis: matches.is_present("ellipsis"),
         print_filename: matches.is_present("print-filename"),
+        smart_branches: !matches.is_present("no-smart-branches"),
     }
 }
 
@@ -182,7 +195,7 @@ struct ContextEntry {
     line: String,
 }
 
-fn process_input(input: &mut BufRead, pattern: &str, input_spec: &InputSpec, printer: &Printer) -> std::io::Result<()> {
+fn process_input(input: &mut BufRead, pattern: &str, options: &Options, printer: &Printer) -> std::io::Result<()> {
     let mut context = Vec::new();
 
     // Whether at least one match was already found.
@@ -203,13 +216,29 @@ fn process_input(input: &mut BufRead, pattern: &str, input_spec: &InputSpec, pri
             }
         };
 
-        let top = context.iter().rposition(|e: &ContextEntry| e.indentation < indentation);
+        let top = context.iter().rposition(|e: &ContextEntry| {
+            // Upper scopes are always preserved.
+            if e.indentation < indentation { return true; }
+            if e.indentation > indentation { return false; }
+
+            if !options.smart_branches { return false; }
+
+            let stripped_line = &line[indentation..];
+            let stripped_context_line = &e.line[e.indentation..];
+            for &(prefix, context_prefixes) in SMART_BRANCH_PREFIXES {
+                if stripped_line.starts_with(prefix) {
+                    return context_prefixes.iter().any(|p| stripped_context_line.starts_with(p));
+                }
+            }
+
+            return false;
+        });
         context.truncate(top.map(|t| t+1).unwrap_or(0));
 
         if line.contains(pattern) {
             // `match_found` is checked to avoid extra line break before first match.
             if !match_found {
-                if let &InputSpec::File(ref path) = input_spec {
+                if let InputSpec::File(ref path) = options.input {
                     printer.print_filename(path)
                 }
             }
@@ -263,7 +292,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
 
     let mut input = Input::open(&options.input)?;
     let mut input_lock = input.lock();
-    process_input(input_lock.as_buf_read(), &options.pattern, &options.input, &printer)?;
+    process_input(input_lock.as_buf_read(), &options.pattern, &options, &printer)?;
     Ok(0)
 }
 
