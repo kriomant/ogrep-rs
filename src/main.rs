@@ -6,7 +6,7 @@ extern crate regex;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::borrow::Cow;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 use std::io::BufRead;
 use std::io::Write as IoWrite;
@@ -71,6 +71,7 @@ struct Options {
     pattern: String,
     input: InputSpec,
     regex: bool,
+    case_insensitive: bool,
     use_colors: UseColors,
     breaks: bool,
     ellipsis: bool,
@@ -164,6 +165,10 @@ fn parse_arguments() -> Options {
             .short("e")
             .long("regex")
             .help("Treat pattern as regular expression"))
+        .arg(Arg::with_name("case-insensitive")
+            .short("i")
+            .long("case-insensitive")
+            .help("Perform case-insensitive matching"))
         .arg(Arg::with_name("color")
             .long("color")
             .takes_value(true)
@@ -195,6 +200,7 @@ fn parse_arguments() -> Options {
           path => InputSpec::File(PathBuf::from(path)),
         },
         regex: matches.is_present("regex"),
+        case_insensitive: matches.is_present("case-insensitive"),
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
         breaks: !matches.is_present("no-breaks"),
         ellipsis: matches.is_present("ellipsis"),
@@ -328,7 +334,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
 
     let pattern: Cow<str> = if options.regex { Cow::from(options.pattern.as_ref()) }
                             else { Cow::from(regex::escape(&options.pattern)) };
-    let re = Regex::new(&pattern)?;
+    let re = RegexBuilder::new(&pattern).case_insensitive(options.case_insensitive).build()?;
 
     let mut input = Input::open(&options.input)?;
     let mut input_lock = input.lock();
