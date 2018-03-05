@@ -60,12 +60,14 @@ struct Options {
     input: InputSpec,
     use_colors: UseColors,
     breaks: bool,
+    ellipsis: bool,
     print_filename: bool,
 }
 
 struct AppearanceOptions {
     use_colors: bool,
     breaks: bool,
+    ellipsis: bool,
     print_filename: bool,
 }
 
@@ -102,6 +104,12 @@ impl Printer {
     fn print_break(&self) {
         if self.options.breaks {
             println!();
+        }
+    }
+
+    fn print_ellipsis(&self) {
+        if self.options.ellipsis {
+            println!("   {}", ansi_term::Style::new().dimmed().paint("…"));
         }
     }
 
@@ -143,6 +151,9 @@ fn parse_arguments() -> Options {
         .arg(Arg::with_name("no-breaks")
             .long("no-breaks")
             .help("Don't preserve line breaks"))
+        .arg(Arg::with_name("ellipsis")
+            .long("ellipsis")
+            .help("Print ellipsis when lines were skipped"))
         .arg(Arg::with_name("print-filename")
             .long("print-filename")
             .help("Print filename on match"))
@@ -156,6 +167,7 @@ fn parse_arguments() -> Options {
         },
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
         breaks: !matches.is_present("no-breaks"),
+        ellipsis: matches.is_present("ellipsis"),
         print_filename: matches.is_present("print-filename"),
     }
 }
@@ -178,6 +190,8 @@ fn process_input(input: &mut BufRead, pattern: &str, input_spec: &InputSpec, pri
 
     // Whether empty line was met since last match.
     let mut was_empty_line = false;
+
+    let mut last_printed_lineno = 0usize;
 
     for (line_number, line) in input.lines().enumerate().map(|(n, l)| (n+1, l)) {
         let line = line?;
@@ -202,14 +216,26 @@ fn process_input(input: &mut BufRead, pattern: &str, input_spec: &InputSpec, pri
             if was_empty_line && match_found {
                 printer.print_break();
             }
-            was_empty_line = false;
-            match_found = true;
 
             for entry in &context {
+                if (!was_empty_line || !printer.options.breaks) &&
+                   entry.line_number > last_printed_lineno + 1 {
+                    printer.print_ellipsis();
+                }
                 printer.print_context(entry.line_number, &entry.line);
+                last_printed_lineno = entry.line_number;
+            }
+
+            if (!was_empty_line || !printer.options.breaks) &&
+               line_number > last_printed_lineno + 1 {
+                printer.print_ellipsis();
             }
             printer.print_match(line_number, &line, pattern);
+            last_printed_lineno = line_number;
+
             context.clear();
+            was_empty_line = false;
+            match_found = true;
 
         } else {
             context.push(ContextEntry { line_number, indentation, line })
@@ -229,6 +255,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
             UseColors::Auto => atty::is(atty::Stream::Stdout),
         },
         breaks: options.breaks,
+        ellipsis: options.ellipsis,
         print_filename: options.print_filename,
     };
 
