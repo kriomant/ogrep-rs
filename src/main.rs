@@ -1,15 +1,17 @@
 extern crate atty;
 #[macro_use] extern crate clap;
 extern crate ansi_term;
-extern crate itertools;
+extern crate regex;
 
 use std::ffi::OsStr;
 use std::path::PathBuf;
+use std::borrow::Cow;
+use regex::Regex;
 
 use std::io::BufRead;
-use std::io::Write;
-use itertools::Itertools;
+use std::io::Write as IoWrite;
 use std::os::unix::ffi::OsStrExt;
+use std::fmt::Write as FmtWrite;
 
 // This prefixes are used when "smart branches" feature
 // is turned on. When line starts with given prefix, then retain
@@ -68,6 +70,7 @@ arg_enum!{
 struct Options {
     pattern: String,
     input: InputSpec,
+    regex: bool,
     use_colors: UseColors,
     breaks: bool,
     ellipsis: bool,
@@ -96,17 +99,21 @@ impl Printer {
         }
     }
 
-    fn print_match(&self, line_number: usize, line: &str, pattern: &str) {
+    fn print_match<'m, M>(&self, line_number: usize, line: &str, matches: M)
+            where M: Iterator<Item=regex::Match<'m>> {
         if self.options.use_colors {
-            let dflt_style = ansi_term::Style::new();
             let match_style = ansi_term::Style::new().bold();
-            let match_str = match_style.paint(pattern);
 
-            print!("{:4}: ", line_number);
-            line.split(pattern).map(|p| dflt_style.paint(p)).intersperse(match_str).for_each(|p| {
-                print!("{}", p);
-            });
-            print!("\n");
+            let mut buf = String::new();
+            let mut pos = 0usize;
+            for m in matches {
+                buf.push_str(&line[pos..m.start()]);
+                write!(&mut buf, "{}", match_style.paint(m.as_str())).unwrap();
+                pos = m.end();
+            }
+            buf.push_str(&line[pos..]);
+
+            println!("{:4}: {}", line_number, buf);
 
         } else {
             println!("{:4}: {}", line_number, line);
@@ -153,6 +160,10 @@ fn parse_arguments() -> Options {
             .required(true))
         .arg(Arg::with_name("input")
             .help("File to search in"))
+        .arg(Arg::with_name("regex")
+            .short("e")
+            .long("regex")
+            .help("Treat pattern as regular expression"))
         .arg(Arg::with_name("color")
             .long("color")
             .takes_value(true)
@@ -183,6 +194,7 @@ fn parse_arguments() -> Options {
           path if path == "-" => InputSpec::Stdin,
           path => InputSpec::File(PathBuf::from(path)),
         },
+        regex: matches.is_present("regex"),
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
         breaks: !matches.is_present("no-breaks"),
         ellipsis: matches.is_present("ellipsis"),
@@ -202,7 +214,7 @@ struct ContextEntry {
     line: String,
 }
 
-fn process_input(input: &mut BufRead, pattern: &str, options: &Options, printer: &Printer) -> std::io::Result<()> {
+fn process_input(input: &mut BufRead, pattern: &Regex, options: &Options, printer: &Printer) -> std::io::Result<()> {
     let mut context = Vec::new();
 
     // Whether at least one match was already found.
@@ -251,39 +263,47 @@ fn process_input(input: &mut BufRead, pattern: &str, options: &Options, printer:
         });
         context.truncate(top.map(|t| t+1).unwrap_or(0));
 
-        if line.contains(pattern) {
-            // `match_found` is checked to avoid extra line break before first match.
-            if !match_found {
-                if let InputSpec::File(ref path) = options.input {
-                    printer.print_filename(path)
+        let matched = {
+            let mut matches = pattern.find_iter(&line).peekable();
+            if matches.peek().is_some() {
+                // `match_found` is checked to avoid extra line break before first match.
+                if !match_found {
+                    if let InputSpec::File(ref path) = options.input {
+                        printer.print_filename(path)
+                    }
                 }
-            }
-            if was_empty_line && match_found {
-                printer.print_break();
-            }
+                if was_empty_line && match_found {
+                    printer.print_break();
+                }
 
-            for entry in &context {
+                for entry in &context {
+                    if (!was_empty_line || !printer.options.breaks) &&
+                       entry.line_number > last_printed_lineno + 1 {
+                        printer.print_ellipsis();
+                    }
+                    printer.print_context(entry.line_number, &entry.line);
+                    last_printed_lineno = entry.line_number;
+                }
+
                 if (!was_empty_line || !printer.options.breaks) &&
-                   entry.line_number > last_printed_lineno + 1 {
+                   line_number > last_printed_lineno + 1 {
                     printer.print_ellipsis();
                 }
-                printer.print_context(entry.line_number, &entry.line);
-                last_printed_lineno = entry.line_number;
+                printer.print_match(line_number, &line, matches);
+                last_printed_lineno = line_number;
+
+                context.clear();
+                was_empty_line = false;
+                match_found = true;
+
+                true
+            } else {
+                false
             }
+        };
 
-            if (!was_empty_line || !printer.options.breaks) &&
-               line_number > last_printed_lineno + 1 {
-                printer.print_ellipsis();
-            }
-            printer.print_match(line_number, &line, pattern);
-            last_printed_lineno = line_number;
-
-            context.clear();
-            was_empty_line = false;
-            match_found = true;
-
-        } else {
-            context.push(ContextEntry { line_number, indentation, line })
+        if !matched {
+            context.push(ContextEntry { line_number, indentation, line });
         }
     }
 
@@ -306,9 +326,13 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
 
     let printer = Printer { options: appearance };
 
+    let pattern: Cow<str> = if options.regex { Cow::from(options.pattern.as_ref()) }
+                            else { Cow::from(regex::escape(&options.pattern)) };
+    let re = Regex::new(&pattern)?;
+
     let mut input = Input::open(&options.input)?;
     let mut input_lock = input.lock();
-    process_input(input_lock.as_buf_read(), &options.pattern, &options, &printer)?;
+    process_input(input_lock.as_buf_read(), &re, &options, &printer)?;
     Ok(0)
 }
 
