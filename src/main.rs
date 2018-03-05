@@ -72,6 +72,7 @@ struct Options {
     input: InputSpec,
     regex: bool,
     case_insensitive: bool,
+    whole_word: bool,
     use_colors: UseColors,
     breaks: bool,
     ellipsis: bool,
@@ -169,6 +170,10 @@ fn parse_arguments() -> Options {
             .short("i")
             .long("case-insensitive")
             .help("Perform case-insensitive matching"))
+        .arg(Arg::with_name("whole-word")
+            .short("w")
+            .long("word")
+            .help("Search for whole words matching pattern"))
         .arg(Arg::with_name("color")
             .long("color")
             .takes_value(true)
@@ -201,6 +206,7 @@ fn parse_arguments() -> Options {
         },
         regex: matches.is_present("regex"),
         case_insensitive: matches.is_present("case-insensitive"),
+        whole_word: matches.is_present("whole-word"),
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
         breaks: !matches.is_present("no-breaks"),
         ellipsis: matches.is_present("ellipsis"),
@@ -332,8 +338,13 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
 
     let printer = Printer { options: appearance };
 
-    let pattern: Cow<str> = if options.regex { Cow::from(options.pattern.as_ref()) }
-                            else { Cow::from(regex::escape(&options.pattern)) };
+    let mut pattern: Cow<str> = if options.regex { Cow::from(options.pattern.as_ref()) }
+                                else { Cow::from(regex::escape(&options.pattern)) };
+    if options.whole_word {
+        let p = pattern.to_mut();
+        p.insert_str(0, r"\b");
+        p.push_str(r"\b");
+    }
     let re = RegexBuilder::new(&pattern).case_insensitive(options.case_insensitive).build()?;
 
     let mut input = Input::open(&options.input)?;
