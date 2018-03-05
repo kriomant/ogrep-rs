@@ -19,6 +19,8 @@ const SMART_BRANCH_PREFIXES: &[(&str, &[&str])] = &[
     ("case ", &["switch "]),
 ];
 
+const PREPROCESSOR_PREFIXES: &[&str] = &["#if ", "#else", "#endif"];
+
 enum InputSpec {
     File(PathBuf),
     Stdin,
@@ -71,6 +73,7 @@ struct Options {
     ellipsis: bool,
     print_filename: bool,
     smart_branches: bool,
+    ignore_preprocessor: bool,
 }
 
 struct AppearanceOptions {
@@ -169,6 +172,9 @@ fn parse_arguments() -> Options {
         .arg(Arg::with_name("no-smart-branches")
             .long("no-smart-branches")
             .help("Don't handle if/if-else/else conditionals specially"))
+        .arg(Arg::with_name("no-ignore-preprocessor")
+            .long("no-ignore-preprocessor")
+            .help("Don't ignore C preprocessor instructions"))
         .get_matches();
 
     Options {
@@ -182,6 +188,7 @@ fn parse_arguments() -> Options {
         ellipsis: matches.is_present("ellipsis"),
         print_filename: matches.is_present("print-filename"),
         smart_branches: !matches.is_present("no-smart-branches"),
+        ignore_preprocessor: !matches.is_present("no-ignore-preprocessor"),
     }
 }
 
@@ -215,6 +222,15 @@ fn process_input(input: &mut BufRead, pattern: &str, options: &Options, printer:
                 continue;
             }
         };
+
+        // Ignore lines looking like C preprocessor instruction, because they
+        // are often written without indentation and this breaks context.
+        if options.ignore_preprocessor {
+           let stripped_line = &line[indentation..];
+           if PREPROCESSOR_PREFIXES.iter().any(|p| stripped_line.starts_with(p)) {
+               continue;
+           }
+        }
 
         let top = context.iter().rposition(|e: &ContextEntry| {
             // Upper scopes are always preserved.
