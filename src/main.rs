@@ -2,6 +2,7 @@ extern crate atty;
 #[macro_use] extern crate clap;
 extern crate ansi_term;
 extern crate regex;
+extern crate itertools;
 
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -20,8 +21,6 @@ const SMART_BRANCH_PREFIXES: &[(&str, &[&str])] = &[
     ("} else ", &["if ", "} else if "]),
     ("case ", &["switch "]),
 ];
-
-const PREPROCESSOR_PREFIXES: &[&str] = &["#if ", "#else", "#endif"];
 
 enum InputSpec {
     File(PathBuf),
@@ -67,6 +66,11 @@ arg_enum!{
     pub enum UseColors { Always, Auto, Never }
 }
 
+arg_enum!{
+    #[derive(Debug)]
+    pub enum Preprocessor { Context, Ignore, Preserve }
+}
+
 struct Options {
     pattern: String,
     input: InputSpec,
@@ -78,7 +82,7 @@ struct Options {
     ellipsis: bool,
     print_filename: bool,
     smart_branches: bool,
-    ignore_preprocessor: bool,
+    preprocessor: Preprocessor,
 }
 
 struct AppearanceOptions {
@@ -153,6 +157,7 @@ fn parse_arguments() -> Options {
     use clap::{App, Arg};
 
     let colors_default = UseColors::Auto.to_string();
+    let preprocessor_default = Preprocessor::Context.to_string();
 
     let matches = App::new("ogrep")
         .about("Outline grep")
@@ -193,9 +198,13 @@ fn parse_arguments() -> Options {
         .arg(Arg::with_name("no-smart-branches")
             .long("no-smart-branches")
             .help("Don't handle if/if-else/else conditionals specially"))
-        .arg(Arg::with_name("no-ignore-preprocessor")
-            .long("no-ignore-preprocessor")
-            .help("Don't ignore C preprocessor instructions"))
+        .arg(Arg::with_name("preprocessor")
+            .long("preprocessor")
+            .takes_value(true)
+            .default_value(&preprocessor_default)
+            .possible_values(&Preprocessor::variants())
+            .case_insensitive(true)
+            .help("How to handle C preprocessor instructions"))
         .get_matches();
 
     Options {
@@ -212,7 +221,7 @@ fn parse_arguments() -> Options {
         ellipsis: matches.is_present("ellipsis"),
         print_filename: matches.is_present("print-filename"),
         smart_branches: !matches.is_present("no-smart-branches"),
-        ignore_preprocessor: !matches.is_present("no-ignore-preprocessor"),
+        preprocessor: value_t!(matches, "preprocessor", Preprocessor).unwrap_or_else(|e| e.exit()),
     }
 }
 
@@ -226,8 +235,29 @@ struct ContextEntry {
     line: String,
 }
 
+enum PreprocessorKind { If, Else, Endif, Other }
+fn preprocessor_instruction_kind(s: &str) -> Option<PreprocessorKind> {
+    match s {
+        _ if s.starts_with("#if ") => Some(PreprocessorKind::If),
+        _ if s.starts_with("#else") => Some(PreprocessorKind::Else),
+        _ if s.starts_with("#endif") => Some(PreprocessorKind::Endif),
+        _ if s.starts_with("#") => Some(PreprocessorKind::Other),
+        _ => None,
+    }
+}
+
 fn process_input(input: &mut BufRead, pattern: &Regex, options: &Options, printer: &Printer) -> std::io::Result<()> {
+    // Context of current line. Last context item contains closest line above current
+    // whose indentation is lower than one of a current line. One before last
+    // item contains closest line above last context line with lower indentation and
+    // so on. Once line is printed, it is removed from context.
+    // Context may contain lines with identical identation due to smart if-else branches
+    // handling.
     let mut context = Vec::new();
+
+    // Secondary stack for preprocessor instructions.
+    let mut preprocessor_level = 0usize;
+    let mut preprocessor_context = Vec::new();
 
     // Whether at least one match was already found.
     let mut match_found = false;
@@ -249,11 +279,34 @@ fn process_input(input: &mut BufRead, pattern: &Regex, options: &Options, printe
 
         // Ignore lines looking like C preprocessor instruction, because they
         // are often written without indentation and this breaks context.
-        if options.ignore_preprocessor {
-           let stripped_line = &line[indentation..];
-           if PREPROCESSOR_PREFIXES.iter().any(|p| stripped_line.starts_with(p)) {
-               continue;
-           }
+        match options.preprocessor {
+            Preprocessor::Preserve => (), // Do nothing, handle line as usual
+            Preprocessor::Ignore =>
+                if preprocessor_instruction_kind(&line[indentation..]).is_some() {
+                    continue;
+                },
+            Preprocessor::Context =>
+                match preprocessor_instruction_kind(&line[indentation..]) {
+                    None => (),
+                    Some(PreprocessorKind::If) => {
+                        preprocessor_level += 1;
+                        preprocessor_context.push(ContextEntry { line_number, indentation: preprocessor_level, line });
+                        continue;
+                    },
+                    Some(PreprocessorKind::Else) => {
+                        preprocessor_context.push(ContextEntry { line_number, indentation: preprocessor_level, line });
+                        continue;
+                    },
+                    Some(PreprocessorKind::Endif) => {
+                        let top = preprocessor_context.iter().rposition(|e: &ContextEntry| {
+                            e.indentation < preprocessor_level
+                        });
+                        preprocessor_context.truncate(top.map(|t| t+1).unwrap_or(0));
+                        preprocessor_level -= 1;
+                        continue;
+                    },
+                    Some(PreprocessorKind::Other) => continue,
+                },
         }
 
         let top = context.iter().rposition(|e: &ContextEntry| {
@@ -288,23 +341,37 @@ fn process_input(input: &mut BufRead, pattern: &Regex, options: &Options, printe
                     printer.print_break();
                 }
 
-                for entry in &context {
+                {
+                    let combined_context = itertools::merge_join_by(&context, &preprocessor_context, |ci, pci|
+                        ci.line_number.cmp(&pci.line_number)
+                    ).map(|either| {
+                        use itertools::EitherOrBoth::{Left, Right, Both};
+                        match either {
+                            Left(l) => l,
+                            Right(l) => l,
+                            Both(_, _) => unreachable!(),
+                        }
+                    });
+
+                    for entry in combined_context {
+                        if (!was_empty_line || !printer.options.breaks) &&
+                           entry.line_number > last_printed_lineno + 1 {
+                            printer.print_ellipsis();
+                        }
+                        printer.print_context(entry.line_number, &entry.line);
+                        last_printed_lineno = entry.line_number;
+                    }
+
                     if (!was_empty_line || !printer.options.breaks) &&
-                       entry.line_number > last_printed_lineno + 1 {
+                       line_number > last_printed_lineno + 1 {
                         printer.print_ellipsis();
                     }
-                    printer.print_context(entry.line_number, &entry.line);
-                    last_printed_lineno = entry.line_number;
+                    printer.print_match(line_number, &line, matches);
+                    last_printed_lineno = line_number;
                 }
-
-                if (!was_empty_line || !printer.options.breaks) &&
-                   line_number > last_printed_lineno + 1 {
-                    printer.print_ellipsis();
-                }
-                printer.print_match(line_number, &line, matches);
-                last_printed_lineno = line_number;
 
                 context.clear();
+                preprocessor_context.clear();
                 was_empty_line = false;
                 match_found = true;
 
