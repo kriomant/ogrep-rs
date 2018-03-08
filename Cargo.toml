@@ -2,6 +2,13 @@
 authors = ["Mikhail Trishchenkov <kriomant@gmail.com>"]
 name = "ogrep"
 version = "0.1.0"
+description = "Tool for searching in indentation-structured texts."
+homepage = "https://github.com/kriomant/ogrep-rs"
+repository = "https://github.com/kriomant/ogrep-rs.git"
+readme = "README.md"
+keywords = ["grep", "search", "regex", "outline", "indentation"]
+categories = ["command-line-utilities", "text-processing"]
+license = "MIT"
 
 [dependencies]
 ansi_term = "0.10.2"

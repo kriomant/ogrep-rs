@@ -159,9 +159,10 @@ fn parse_arguments() -> Options {
     let colors_default = UseColors::Auto.to_string();
     let preprocessor_default = Preprocessor::Context.to_string();
 
-    let matches = App::new("ogrep")
-        .about("Outline grep")
-        .author("Mikhail Trishchenkov <kriomant@gmail.com>")
+    let matches = App::new(crate_name!())
+        .about(crate_description!())
+        .author(crate_authors!("\n"))
+		.version(crate_version!())
         .arg(Arg::with_name("pattern")
             .help("Pattern to search for")
             .required(true))
