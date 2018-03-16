@@ -230,6 +230,10 @@ fn parse_arguments() -> Options {
         .about(crate_description!())
         .author(crate_authors!("\n"))
 		.version(crate_version!())
+        .after_help("EXIT STATUS:
+    0  Some matches found
+    1  No matches found
+    2  An error occurred")
         .arg(Arg::with_name("pattern")
             .help("Pattern to search for")
             .required(true))
@@ -327,7 +331,7 @@ fn process_input(input: &mut BufRead,
                  pattern: &Regex,
                  options: &Options,
                  filepath: Option<&std::path::Path>,
-                 printer: &mut Printer) -> std::io::Result<()> {
+                 printer: &mut Printer) -> std::io::Result<bool> {
     // Context of current line. Last context item contains closest line above current
     // whose indentation is lower than one of a current line. One before last
     // item contains closest line above last context line with lower indentation and
@@ -467,7 +471,7 @@ fn process_input(input: &mut BufRead,
         }
     }
 
-    Ok(())
+    Ok(match_found)
 }
 
 fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
@@ -507,6 +511,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
         Output::Stdout(std::io::stdout())
     };
 
+    let mut match_found = false;
     {
         let mut output_lock = output.lock();
 
@@ -560,9 +565,9 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
 
                     let mut file = std::fs::File::open(&filepath)?;
                     let mut input = std::io::BufReader::new(file);
-                    process_input(&mut input, &re, &options, Some(filepath), &mut printer)?;
+                    match_found |= process_input(&mut input, &re, &options, Some(filepath), &mut printer)?;
                 }
-            }
+            };
 
             match git_grep_process.wait()?.code() {
                 Some(0) | Some(1) => (),
@@ -576,12 +581,12 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
                 InputSpec::File(ref path) => Some(path),
                 InputSpec::Stdin => None,
             };
-            process_input(input_lock.as_buf_read(), &re, &options, filename, &mut printer)?;
-        }
+            match_found = process_input(input_lock.as_buf_read(), &re, &options, filename, &mut printer)?
+        };
     }
 
     output.close()?;
-    Ok(0)
+    Ok(if match_found { 0 } else { 1 })
 }
 
 fn main() {
@@ -589,7 +594,7 @@ fn main() {
         Ok(code) => std::process::exit(code),
         Err(err) => {
             writeln!(std::io::stderr(), "{}", err.description()).unwrap();
-            std::process::exit(127);
+            std::process::exit(2);
         },
     }
 }
