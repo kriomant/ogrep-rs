@@ -25,6 +25,26 @@ const SMART_BRANCH_PREFIXES: &[(&str, &[&str])] = &[
 const LESS_ARGS: &[&str] = &["--quit-if-one-screen", "--RAW-CONTROL-CHARS",
                              "--quit-on-intr", "--no-init"];
 
+#[derive(Debug)]
+enum OgrepError {
+    GitGrepWithStdinInput,
+    GitGrepFailed,
+}
+impl std::error::Error for OgrepError {
+    fn description(&self) -> &str {
+        match *self {
+            OgrepError::GitGrepWithStdinInput => "Don't use '-' input with --use-git-grep option",
+            OgrepError::GitGrepFailed => "git grep failed",
+        }
+    }
+}
+impl std::fmt::Display for OgrepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        use std::error::Error;
+        write!(f, "{}", self.description())
+    }
+}
+
 enum InputSpec {
     File(PathBuf),
     Stdin,
@@ -123,6 +143,7 @@ struct Options {
     whole_word: bool,
     use_colors: UseColors,
     use_pager: bool,
+    use_git_grep: bool,
     breaks: bool,
     ellipsis: bool,
     print_filename: bool,
@@ -236,6 +257,10 @@ fn parse_arguments() -> Options {
         .arg(Arg::with_name("no-pager")
             .long("no-pager")
             .help("Don't use pager even when output is terminal"))
+        .arg(Arg::with_name("use-git-grep")
+            .long("use-git-grep")
+            .short("g")
+            .help("Use git grep for prior search"))
         .arg(Arg::with_name("no-breaks")
             .long("no-breaks")
             .help("Don't preserve line breaks"))
@@ -268,6 +293,7 @@ fn parse_arguments() -> Options {
         whole_word: matches.is_present("whole-word"),
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
         use_pager: !matches.is_present("no-pager"),
+        use_git_grep: matches.is_present("use-git-grep"),
         breaks: !matches.is_present("no-breaks"),
         ellipsis: matches.is_present("ellipsis"),
         print_filename: matches.is_present("print-filename"),
@@ -297,7 +323,11 @@ fn preprocessor_instruction_kind(s: &str) -> Option<PreprocessorKind> {
     }
 }
 
-fn process_input(input: &mut BufRead, pattern: &Regex, options: &Options, printer: &mut Printer) -> std::io::Result<()> {
+fn process_input(input: &mut BufRead,
+                 pattern: &Regex,
+                 options: &Options,
+                 filepath: Option<&std::path::Path>,
+                 printer: &mut Printer) -> std::io::Result<()> {
     // Context of current line. Last context item contains closest line above current
     // whose indentation is lower than one of a current line. One before last
     // item contains closest line above last context line with lower indentation and
@@ -384,7 +414,7 @@ fn process_input(input: &mut BufRead, pattern: &Regex, options: &Options, printe
             if matches.peek().is_some() {
                 // `match_found` is checked to avoid extra line break before first match.
                 if !match_found {
-                    if let InputSpec::File(ref path) = options.input {
+                    if let Some(ref path) = filepath {
                         printer.print_filename(path)
                     }
                 }
@@ -451,7 +481,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
         },
         breaks: options.breaks,
         ellipsis: options.ellipsis,
-        print_filename: options.print_filename,
+        print_filename: options.print_filename || options.use_git_grep,
     };
 
     let mut output= if options.use_pager {
@@ -495,9 +525,59 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
         }
         let re = RegexBuilder::new(&pattern).case_insensitive(options.case_insensitive).build()?;
 
-        let mut input = Input::open(&options.input)?;
-        let mut input_lock = input.lock();
-        process_input(input_lock.as_buf_read(), &re, &options, &mut printer)?;
+        if options.use_git_grep {
+            let pathspec = match options.input {
+                InputSpec::File(ref path) => path,
+                InputSpec::Stdin => return Err(Box::new(OgrepError::GitGrepWithStdinInput)),
+            };
+            let mut git_grep_args = vec![OsStr::new("grep"), OsStr::new("--files-with-matches")];
+            if options.case_insensitive {
+                git_grep_args.push(OsStr::new("--ignore-case"))
+            }
+            if !options.regex {
+                git_grep_args.push(OsStr::new("--fixed-strings"))
+            }
+            if options.whole_word {
+                git_grep_args.push(OsStr::new("--word-regexp"))
+            }
+            git_grep_args.push(OsStr::new("-e"));
+            git_grep_args.push(OsStr::new(&options.pattern));
+            git_grep_args.push(OsStr::new("--"));
+            git_grep_args.push(pathspec.as_os_str());
+            let mut git_grep_process = std::process::Command::new("git")
+                .args(&git_grep_args)
+                .stdout(std::process::Stdio::piped())
+                .spawn()?;
+
+            {
+                let out = git_grep_process.stdout.as_mut().unwrap();
+                let mut reader = std::io::BufReader::new(out);
+                let mut line = String::new();
+                while let Ok(bytes_count) = reader.read_line(&mut line) {
+                    if bytes_count == 0 { break }
+
+                    let filepath = std::path::Path::new(line.trim_right_matches('\n'));
+
+                    let mut file = std::fs::File::open(&filepath)?;
+                    let mut input = std::io::BufReader::new(file);
+                    process_input(&mut input, &re, &options, Some(filepath), &mut printer)?;
+                }
+            }
+
+            match git_grep_process.wait()?.code() {
+                Some(0) | Some(1) => (),
+                _ => return Err(Box::new(OgrepError::GitGrepFailed)),
+            }
+
+        } else {
+            let mut input = Input::open(&options.input)?;
+            let mut input_lock = input.lock();
+            let filename: Option<&std::path::Path> = match options.input {
+                InputSpec::File(ref path) => Some(path),
+                InputSpec::Stdin => None,
+            };
+            process_input(input_lock.as_buf_read(), &re, &options, filename, &mut printer)?;
+        }
     }
 
     output.close()?;

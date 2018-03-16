@@ -85,10 +85,18 @@ Here is brief feature list:
 
 ## Searching in directory
 
+### Integration with external tools
+
 `otool` in intended to search in single file only. And it is not so fast to be used for searching through many files. But you can integrate it with other search tools like this:
 
 ```
 grep -l cache_used -r . --include='*.cc' | xargs -n1 ogrep --print-filename cache_used
 ```
 
-Builtin integration with searching tools is planned.
+### Builtin `git grep` support
+
+`ogrep` has builtin integration with `git grep`: when `-g` option is given, second argument is passed to `git grep` as path specification. All relevant options (`-w`, `-i`, etc.) are also passed to `git grep` automatically, `--print-filename` is forced.
+
+```
+ogrep -g cache_used '*.cc'
+```
