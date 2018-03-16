@@ -22,6 +22,9 @@ const SMART_BRANCH_PREFIXES: &[(&str, &[&str])] = &[
     ("case ", &["switch "]),
 ];
 
+const LESS_ARGS: &[&str] = &["--quit-if-one-screen", "--RAW-CONTROL-CHARS",
+                             "--quit-on-intr", "--no-init"];
+
 enum InputSpec {
     File(PathBuf),
     Stdin,
@@ -61,6 +64,47 @@ impl<'a> InputLock<'a> {
     }
 }
 
+enum Output {
+    Pager(std::process::Child),
+    Stdout(std::io::Stdout),
+}
+enum OutputLock<'a> {
+    Pager(&'a mut std::process::ChildStdin),
+    Stdout(std::io::StdoutLock<'a>),
+}
+impl Output {
+    fn lock(&mut self) -> OutputLock {
+        match *self {
+            Output::Pager(ref mut process) => OutputLock::Pager(process.stdin.as_mut().unwrap()),
+            Output::Stdout(ref mut stdout) => OutputLock::Stdout(stdout.lock()),
+        }
+    }
+
+    fn close(mut self) -> Result<(), Box<std::error::Error>> {
+        self.close_impl()
+    }
+
+    fn close_impl(&mut self) -> Result<(), Box<std::error::Error>> {
+        match self {
+            &mut Output::Pager(ref mut process) => { process.wait()?; Ok(()) },
+            &mut Output::Stdout(_) => Ok(()),
+        }
+    }
+}
+impl Drop for Output {
+    fn drop(&mut self) {
+        let _ = self.close_impl();
+    }
+}
+impl<'a> OutputLock<'a> {
+    fn as_write(&mut self) -> &mut std::io::Write {
+        match self {
+            &mut OutputLock::Pager(ref mut stdin) => stdin,
+            &mut OutputLock::Stdout(ref mut lock) => lock,
+        }
+    }
+}
+
 arg_enum!{
     #[derive(Debug)]
     pub enum UseColors { Always, Auto, Never }
@@ -78,6 +122,7 @@ struct Options {
     case_insensitive: bool,
     whole_word: bool,
     use_colors: UseColors,
+    use_pager: bool,
     breaks: bool,
     ellipsis: bool,
     print_filename: bool,
@@ -92,20 +137,21 @@ struct AppearanceOptions {
     print_filename: bool,
 }
 
-struct Printer {
+struct Printer<'o> {
+	output: &'o mut std::io::Write,
     options: AppearanceOptions,
 }
-impl Printer {
-    fn print_context(&self, line_number: usize, line: &str) {
+impl<'o> Printer<'o> {
+    fn print_context(&mut self, line_number: usize, line: &str) {
         if self.options.use_colors {
             let text = format!("{:4}: {}", line_number, line);
-            println!("{}", ansi_term::Style::new().dimmed().paint(text));
+            writeln!(self.output, "{}", ansi_term::Style::new().dimmed().paint(text)).unwrap();
         } else {
-            println!("{:4}: {}", line_number, line);
+            writeln!(self.output, "{:4}: {}", line_number, line).unwrap();
         }
     }
 
-    fn print_match<'m, M>(&self, line_number: usize, line: &str, matches: M)
+    fn print_match<'m, M>(&mut self, line_number: usize, line: &str, matches: M)
             where M: Iterator<Item=regex::Match<'m>> {
         if self.options.use_colors {
             let match_style = ansi_term::Style::new().bold();
@@ -119,22 +165,22 @@ impl Printer {
             }
             buf.push_str(&line[pos..]);
 
-            println!("{:4}: {}", line_number, buf);
+            writeln!(self.output, "{:4}: {}", line_number, buf).unwrap();
 
         } else {
-            println!("{:4}: {}", line_number, line);
+            writeln!(self.output, "{:4}: {}", line_number, line).unwrap();
         }
     }
 
-    fn print_break(&self) {
+    fn print_break(&mut self) {
         if self.options.breaks {
-            println!();
+            writeln!(self.output).unwrap();
         }
     }
 
-    fn print_ellipsis(&self) {
+    fn print_ellipsis(&mut self) {
         if self.options.ellipsis {
-            println!("   {}", ansi_term::Style::new().dimmed().paint("…"));
+            writeln!(self.output, "   {}", ansi_term::Style::new().dimmed().paint("…")).unwrap();
         }
     }
 
@@ -187,6 +233,9 @@ fn parse_arguments() -> Options {
             .possible_values(&UseColors::variants())
             .case_insensitive(true)
             .help("File to search in"))
+        .arg(Arg::with_name("no-pager")
+            .long("no-pager")
+            .help("Don't use pager even when output is terminal"))
         .arg(Arg::with_name("no-breaks")
             .long("no-breaks")
             .help("Don't preserve line breaks"))
@@ -218,6 +267,7 @@ fn parse_arguments() -> Options {
         case_insensitive: matches.is_present("case-insensitive"),
         whole_word: matches.is_present("whole-word"),
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
+        use_pager: !matches.is_present("no-pager"),
         breaks: !matches.is_present("no-breaks"),
         ellipsis: matches.is_present("ellipsis"),
         print_filename: matches.is_present("print-filename"),
@@ -247,7 +297,7 @@ fn preprocessor_instruction_kind(s: &str) -> Option<PreprocessorKind> {
     }
 }
 
-fn process_input(input: &mut BufRead, pattern: &Regex, options: &Options, printer: &Printer) -> std::io::Result<()> {
+fn process_input(input: &mut BufRead, pattern: &Regex, options: &Options, printer: &mut Printer) -> std::io::Result<()> {
     // Context of current line. Last context item contains closest line above current
     // whose indentation is lower than one of a current line. One before last
     // item contains closest line above last context line with lower indentation and
@@ -404,20 +454,53 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
         print_filename: options.print_filename,
     };
 
-    let printer = Printer { options: appearance };
+    let mut output= if options.use_pager {
+        let pager_process = match std::env::var_os("PAGER") {
+            Some(pager_cmdline) => {
+                // User configured custom pager via environment variable.
+                // Since pager can contain parameters, not only command name,
+                // it is needed to start it using shell. Find which shell to use.
+                let shell_var = std::env::var_os("SHELL");
+                let shell_path = shell_var.as_ref().map(|v| v.as_os_str()).unwrap_or(OsStr::new("/bin/sh"));
+                std::process::Command::new(shell_path)
+                    .args(&[OsStr::new("-c"), &pager_cmdline])
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()?
+            },
+            None => std::process::Command::new("less")
+                        .args(LESS_ARGS)
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()?
+        };
+        Output::Pager(pager_process)
+    } else {
+        Output::Stdout(std::io::stdout())
+    };
 
-    let mut pattern: Cow<str> = if options.regex { Cow::from(options.pattern.as_ref()) }
-                                else { Cow::from(regex::escape(&options.pattern)) };
-    if options.whole_word {
-        let p = pattern.to_mut();
-        p.insert_str(0, r"\b");
-        p.push_str(r"\b");
+    {
+        let mut output_lock = output.lock();
+
+        let mut printer = Printer { output: output_lock.as_write(), options: appearance };
+
+        let mut pattern: Cow<str> =
+            if options.regex {
+                Cow::from(options.pattern.as_ref())
+            } else {
+                Cow::from(regex::escape(&options.pattern))
+            };
+        if options.whole_word {
+            let p = pattern.to_mut();
+            p.insert_str(0, r"\b");
+            p.push_str(r"\b");
+        }
+        let re = RegexBuilder::new(&pattern).case_insensitive(options.case_insensitive).build()?;
+
+        let mut input = Input::open(&options.input)?;
+        let mut input_lock = input.lock();
+        process_input(input_lock.as_buf_read(), &re, &options, &mut printer)?;
     }
-    let re = RegexBuilder::new(&pattern).case_insensitive(options.case_insensitive).build()?;
 
-    let mut input = Input::open(&options.input)?;
-    let mut input_lock = input.lock();
-    process_input(input_lock.as_buf_read(), &re, &options, &printer)?;
+    output.close()?;
     Ok(0)
 }
 
