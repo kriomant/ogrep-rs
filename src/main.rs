@@ -207,17 +207,16 @@ impl<'o> Printer<'o> {
         }
     }
 
-    fn print_filename(&self, filename: &std::path::Path) {
+    fn print_filename(&mut self, filename: &std::path::Path) {
         if self.options.print_filename {
-            let mut stdout = std::io::stdout();
-            stdout.write(b"\n").unwrap();
+            self.output.write(b"\n").unwrap();
             if self.options.use_colors {
                 let style = ansi_term::Style::new().underline();
-                style.paint(filename.as_os_str().as_bytes()).write_to(&mut stdout).unwrap();
+                style.paint(filename.as_os_str().as_bytes()).write_to(&mut self.output).unwrap();
             } else {
-                stdout.write_all(filename.as_os_str().as_bytes()).unwrap();
+                self.output.write_all(filename.as_os_str().as_bytes()).unwrap();
             }
-            stdout.write(b"\n\n").unwrap();
+            self.output.write(b"\n\n").unwrap();
         }
     }
 }
