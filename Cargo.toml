@@ -11,8 +11,7 @@ categories = ["command-line-utilities", "text-processing"]
 license = "MIT"
 
 [dependencies]
-ansi_term = "0.10.2"
-atty = "0.2.6"
 clap = "2.30.0"
 itertools = "0.7.7"
 regex = "0.2.6"
+termion = "1.5.1"

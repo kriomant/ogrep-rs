@@ -1,8 +1,7 @@
-extern crate atty;
 #[macro_use] extern crate clap;
-extern crate ansi_term;
 extern crate regex;
 extern crate itertools;
+extern crate termion;
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -167,8 +166,9 @@ struct Printer<'o> {
 impl<'o> Printer<'o> {
     fn print_context(&mut self, line_number: usize, line: &str) {
         if self.options.use_colors {
-            let text = format!("{:4}: {}", line_number, line);
-            writeln!(self.output, "{}", ansi_term::Style::new().dimmed().paint(text)).unwrap();
+            writeln!(self.output, "{dim}{:4}: {}{nodim}", line_number, line,
+                     dim=termion::style::Faint,
+                     nodim=termion::style::NoFaint).unwrap();
         } else {
             writeln!(self.output, "{:4}: {}", line_number, line).unwrap();
         }
@@ -177,13 +177,15 @@ impl<'o> Printer<'o> {
     fn print_match<'m, M>(&mut self, line_number: usize, line: &str, matches: M)
             where M: Iterator<Item=regex::Match<'m>> {
         if self.options.use_colors {
-            let match_style = ansi_term::Style::new().bold();
-
             let mut buf = String::new();
             let mut pos = 0usize;
             for m in matches {
                 buf.push_str(&line[pos..m.start()]);
-                write!(&mut buf, "{}", match_style.paint(m.as_str())).unwrap();
+                write!(&mut buf, "{bold}{}{normal}", m.as_str(),
+                       bold=termion::style::Bold,
+                       // I wish to use `NoBold` here, but it doesn't work, at least on
+                       // Mac with iTerm2. So use `Reset`.
+                       normal=termion::style::Reset).unwrap();
                 pos = m.end();
             }
             buf.push_str(&line[pos..]);
@@ -203,7 +205,9 @@ impl<'o> Printer<'o> {
 
     fn print_ellipsis(&mut self) {
         if self.options.ellipsis {
-            writeln!(self.output, "   {}", ansi_term::Style::new().dimmed().paint("…")).unwrap();
+            writeln!(self.output, "   {dim}{}{nodim}", "…",
+                     dim=termion::style::Faint,
+                     nodim=termion::style::NoFaint).unwrap();
         }
     }
 
@@ -211,8 +215,9 @@ impl<'o> Printer<'o> {
         if self.options.print_filename {
             self.output.write(b"\n").unwrap();
             if self.options.use_colors {
-                let style = ansi_term::Style::new().underline();
-                style.paint(filename.as_os_str().as_bytes()).write_to(&mut self.output).unwrap();
+                write!(&mut self.output, "{}", termion::style::Underline).unwrap();
+                self.output.write(filename.as_os_str().as_bytes()).unwrap();
+                write!(&mut self.output, "{}", termion::style::NoUnderline).unwrap();
             } else {
                 self.output.write_all(filename.as_os_str().as_bytes()).unwrap();
             }
@@ -500,7 +505,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
         use_colors: match options.use_colors {
             UseColors::Always => true,
             UseColors::Never => false,
-            UseColors::Auto => atty::is(atty::Stream::Stdout),
+            UseColors::Auto => termion::is_tty(&std::io::stdout()),
         },
         breaks: options.breaks,
         ellipsis: options.ellipsis,
