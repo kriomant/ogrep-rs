@@ -136,6 +136,11 @@ arg_enum!{
     pub enum Preprocessor { Context, Ignore, Preserve }
 }
 
+arg_enum!{
+    #[derive(Debug)]
+    pub enum ColorSchemeSpec { Grey, Colored }
+}
+
 struct Options {
     pattern: String,
     input: InputSpec,
@@ -143,6 +148,7 @@ struct Options {
     case_insensitive: bool,
     whole_word: bool,
     use_colors: UseColors,
+    color_scheme: ColorSchemeSpec,
     use_pager: bool,
     use_git_grep: bool,
     breaks: bool,
@@ -152,8 +158,15 @@ struct Options {
     preprocessor: Preprocessor,
 }
 
+struct ColorScheme {
+    filename: (String, String),
+    matched_part: (String, String),
+    context_line: (String, String),
+}
+
 struct AppearanceOptions {
     use_colors: bool,
+    color_scheme: ColorScheme,
     breaks: bool,
     ellipsis: bool,
     print_filename: bool,
@@ -166,9 +179,9 @@ struct Printer<'o> {
 impl<'o> Printer<'o> {
     fn print_context(&mut self, line_number: usize, line: &str) {
         if self.options.use_colors {
-            writeln!(self.output, "{dim}{:4}: {}{nodim}", line_number, line,
-                     dim=termion::style::Faint,
-                     nodim=termion::style::NoFaint).unwrap();
+            writeln!(self.output, "{color}{:4}: {}{nocolor}", line_number, line,
+                     color=self.options.color_scheme.context_line.0,
+                     nocolor=self.options.color_scheme.context_line.1).unwrap();
         } else {
             writeln!(self.output, "{:4}: {}", line_number, line).unwrap();
         }
@@ -181,11 +194,9 @@ impl<'o> Printer<'o> {
             let mut pos = 0usize;
             for m in matches {
                 buf.push_str(&line[pos..m.start()]);
-                write!(&mut buf, "{bold}{}{normal}", m.as_str(),
-                       bold=termion::style::Bold,
-                       // I wish to use `NoBold` here, but it doesn't work, at least on
-                       // Mac with iTerm2. So use `Reset`.
-                       normal=termion::style::Reset).unwrap();
+                write!(&mut buf, "{color}{}{nocolor}", m.as_str(),
+                       color=self.options.color_scheme.matched_part.0,
+                       nocolor=self.options.color_scheme.matched_part.1).unwrap();
                 pos = m.end();
             }
             buf.push_str(&line[pos..]);
@@ -215,9 +226,9 @@ impl<'o> Printer<'o> {
         if self.options.print_filename {
             self.output.write(b"\n").unwrap();
             if self.options.use_colors {
-                write!(&mut self.output, "{}", termion::style::Underline).unwrap();
+                write!(&mut self.output, "{}", self.options.color_scheme.filename.0).unwrap();
                 self.output.write(filename.as_os_str().as_bytes()).unwrap();
-                write!(&mut self.output, "{}", termion::style::NoUnderline).unwrap();
+                write!(&mut self.output, "{}", self.options.color_scheme.filename.1).unwrap();
             } else {
                 self.output.write_all(filename.as_os_str().as_bytes()).unwrap();
             }
@@ -230,6 +241,7 @@ fn parse_arguments<'i, Iter: Iterator<Item=OsString>>(args: Iter) -> Options {
     use clap::{App, Arg};
 
     let colors_default = UseColors::Auto.to_string();
+    let color_scheme_default = ColorSchemeSpec::Grey.to_string();
     let preprocessor_default = Preprocessor::Context.to_string();
 
     let matches = App::new(crate_name!())
@@ -268,7 +280,14 @@ EXIT STATUS:
             .default_value(&colors_default)
             .possible_values(&UseColors::variants())
             .case_insensitive(true)
-            .help("File to search in"))
+            .help("Whether to use colors"))
+        .arg(Arg::with_name("color-scheme")
+            .long("color-scheme")
+            .takes_value(true)
+            .default_value(&color_scheme_default)
+            .possible_values(&ColorSchemeSpec::variants())
+            .case_insensitive(true)
+            .help("Color scheme to use"))
         .arg(Arg::with_name("no-pager")
             .long("no-pager")
             .help("Don't use pager even when output is terminal"))
@@ -307,6 +326,7 @@ EXIT STATUS:
         case_insensitive: matches.is_present("case-insensitive"),
         whole_word: matches.is_present("whole-word"),
         use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
+        color_scheme: value_t!(matches, "color-scheme", ColorSchemeSpec).unwrap_or_else(|e| e.exit()),
         use_pager: !matches.is_present("no-pager"),
         use_git_grep: matches.is_present("use-git-grep"),
         breaks: !matches.is_present("no-breaks"),
@@ -506,6 +526,24 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
             UseColors::Always => true,
             UseColors::Never => false,
             UseColors::Auto => termion::is_tty(&std::io::stdout()),
+        },
+        color_scheme: {
+            use termion::style::{Faint, NoFaint, Bold, Underline, NoUnderline, Reset as ResetStyle};
+            use termion::color::{Fg, Blue, Red, Reset};
+            match options.color_scheme {
+                ColorSchemeSpec::Grey => ColorScheme {
+                    filename:     (format!("{}", Underline), format!("{}", NoUnderline)),
+                    // I wish to use `NoBold` here, but it doesn't work, at least on
+                    // Mac with iTerm2. So use `Reset`.
+                    matched_part: (format!("{}", Bold),      format!("{}", ResetStyle)),
+                    context_line: (format!("{}", Faint),     format!("{}", NoFaint)),
+                },
+                ColorSchemeSpec::Colored => ColorScheme {
+                    filename: (format!("{}", Fg(Blue)), format!("{}", Fg(Reset))),
+                    matched_part: (format!("{}", Fg(Red)), format!("{}", Fg(Reset))),
+                    context_line: (format!("{}", Faint), format!("{}", ResetStyle)),
+                },
+            }
         },
         breaks: options.breaks,
         ellipsis: options.ellipsis,
