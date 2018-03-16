@@ -4,7 +4,7 @@ extern crate ansi_term;
 extern crate regex;
 extern crate itertools;
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::borrow::Cow;
 use regex::{Regex, RegexBuilder};
@@ -29,12 +29,14 @@ const LESS_ARGS: &[&str] = &["--quit-if-one-screen", "--RAW-CONTROL-CHARS",
 enum OgrepError {
     GitGrepWithStdinInput,
     GitGrepFailed,
+    InvalidOgrepOptions,
 }
 impl std::error::Error for OgrepError {
     fn description(&self) -> &str {
         match *self {
             OgrepError::GitGrepWithStdinInput => "Don't use '-' input with --use-git-grep option",
             OgrepError::GitGrepFailed => "git grep failed",
+            OgrepError::InvalidOgrepOptions => "OGREP_OPTIONS environment variable contains invalid UTF-8",
         }
     }
 }
@@ -220,7 +222,7 @@ impl<'o> Printer<'o> {
     }
 }
 
-fn parse_arguments() -> Options {
+fn parse_arguments<'i, Iter: Iterator<Item=OsString>>(args: Iter) -> Options {
     use clap::{App, Arg};
 
     let colors_default = UseColors::Auto.to_string();
@@ -230,10 +232,15 @@ fn parse_arguments() -> Options {
         .about(crate_description!())
         .author(crate_authors!("\n"))
 		.version(crate_version!())
-        .after_help("EXIT STATUS:
-    0  Some matches found
-    1  No matches found
-    2  An error occurred")
+        .setting(clap::AppSettings::NoBinaryName)
+        .after_help("\
+ENVIRONMENT VARIABLES:
+    OGREP_OPTIONS  Default options
+
+EXIT STATUS:
+    0              Some matches found
+    1              No matches found
+    2              An error occurred")
         .arg(Arg::with_name("pattern")
             .help("Pattern to search for")
             .required(true))
@@ -284,7 +291,7 @@ fn parse_arguments() -> Options {
             .possible_values(&Preprocessor::variants())
             .case_insensitive(true)
             .help("How to handle C preprocessor instructions"))
-        .get_matches();
+        .get_matches_from(args);
 
     Options {
         pattern: matches.value_of("pattern").expect("pattern").to_string(),
@@ -475,7 +482,20 @@ fn process_input(input: &mut BufRead,
 }
 
 fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
-    let options = parse_arguments();
+    // Read default options from OGREP_OPTIONS environment variable.
+    let env_var = std::env::var("OGREP_OPTIONS");
+    let env_var_ref = match env_var {
+        Ok(ref opts) => opts.as_str(),
+        Err(std::env::VarError::NotPresent) => "",
+        Err(std::env::VarError::NotUnicode(_)) =>
+            return Err(Box::new(OgrepError::InvalidOgrepOptions)),
+    };
+    let env_args = env_var_ref
+        .split_whitespace()
+        .map(|b| OsString::from(b));
+    let cmdline_args = std::env::args_os();
+    let args = env_args.chain(cmdline_args.skip(1));
+    let options = parse_arguments(args);
 
     let appearance = AppearanceOptions {
         use_colors: match options.use_colors {
