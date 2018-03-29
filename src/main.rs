@@ -12,6 +12,7 @@ use std::io::BufRead;
 use std::io::Write as IoWrite;
 use std::os::unix::ffi::OsStrExt;
 use std::fmt::Write as FmtWrite;
+use itertools::Itertools;
 
 // This prefixes are used when "smart branches" feature
 // is turned on. When line starts with given prefix, then retain
@@ -156,6 +157,8 @@ struct Options {
     print_filename: bool,
     smart_branches: bool,
     preprocessor: Preprocessor,
+    context_lines_before: usize,
+    context_lines_after: usize,
 }
 
 struct ColorScheme {
@@ -274,6 +277,22 @@ EXIT STATUS:
             .short("w")
             .long("word")
             .help("Search for whole words matching pattern"))
+        .arg(Arg::with_name("before_context")
+            .short("B")
+            .long("before-context")
+            .takes_value(true)
+            .help("Show specified number of leading lines before matched one"))
+        .arg(Arg::with_name("after_context")
+            .short("A")
+            .long("after-context")
+            .takes_value(true)
+            .help("Show specified number of trailing lines after matched one"))
+        .arg(Arg::with_name("both_contexts")
+            .short("C")
+            .long("context")
+            .takes_value(true)
+            .conflicts_with_all(&["before_context", "after_context"])
+            .help("Show specified number of leading and trailing lines before/after matched one"))
         .arg(Arg::with_name("color")
             .long("color")
             .takes_value(true)
@@ -316,6 +335,29 @@ EXIT STATUS:
             .help("How to handle C preprocessor instructions"))
         .get_matches_from(args);
 
+    let (before_context, after_context) =
+        if matches.is_present("both_contexts") {
+            let c: usize = value_t!(matches.value_of("both_contexts"), usize)
+                                .unwrap_or_else(|e| e.exit());
+            (c, c)
+        } else {
+            let before =
+                if matches.is_present("before_context") {
+                    value_t!(matches.value_of("before_context"), usize)
+                                    .unwrap_or_else(|e| e.exit())
+                } else {
+                    0
+                };
+            let after =
+                if matches.is_present("after_context") {
+                    value_t!(matches.value_of("after_context"), usize)
+                                    .unwrap_or_else(|e| e.exit())
+                } else {
+                    0
+                };
+            (before, after)
+        };
+
     Options {
         pattern: matches.value_of("pattern").expect("pattern").to_string(),
         input: match matches.value_of_os("input").unwrap_or(OsStr::new("-")) {
@@ -334,6 +376,8 @@ EXIT STATUS:
         print_filename: matches.is_present("print-filename"),
         smart_branches: !matches.is_present("no-smart-branches"),
         preprocessor: value_t!(matches, "preprocessor", Preprocessor).unwrap_or_else(|e| e.exit()),
+        context_lines_before: before_context,
+        context_lines_after: after_context,
     }
 }
 
@@ -341,10 +385,24 @@ fn calculate_indentation(s: &str) -> Option<usize> {
     s.find(|c: char| !c.is_whitespace())
 }
 
+struct Line {
+    number: usize,
+    text: String,
+}
+
 struct ContextEntry {
-    line_number: usize,
+    line: Line,
     indentation: usize,
-    line: String,
+}
+
+struct PreprocessorContextEntry {
+    line: Line,
+    level: usize,
+}
+
+struct SurroundContextEntry {
+    line: Line,
+    print_on_discard: bool,
 }
 
 enum PreprocessorKind { If, Else, Endif, Other }
@@ -375,6 +433,12 @@ fn process_input(input: &mut BufRead,
     let mut preprocessor_level = 0usize;
     let mut preprocessor_context = Vec::new();
 
+    // Context as it is understood by usual 'grep' - fixed number of
+    // lines before and after matched one.
+    let mut surrounding_context =
+        std::collections::VecDeque::<SurroundContextEntry>::with_capacity(
+            options.context_lines_before + options.context_lines_after);
+
     // Whether at least one match was already found.
     let mut match_found = false;
 
@@ -383,66 +447,84 @@ fn process_input(input: &mut BufRead,
 
     let mut last_printed_lineno = 0usize;
 
+    // How many trailing lines after match left to print.
+    let mut trailing_lines_left = 0usize;
+
     for (line_number, line) in input.lines().enumerate().map(|(n, l)| (n+1, l)) {
         let line = line?;
-        let indentation = match calculate_indentation(&line) {
-            Some(ind) => ind,
-            None => {
-                was_empty_line = true;
-                continue;
-            }
-        };
 
-        // Ignore lines looking like C preprocessor instruction, because they
-        // are often written without indentation and this breaks context.
-        match options.preprocessor {
-            Preprocessor::Preserve => (), // Do nothing, handle line as usual
-            Preprocessor::Ignore =>
-                if preprocessor_instruction_kind(&line[indentation..]).is_some() {
-                    continue;
-                },
-            Preprocessor::Context =>
-                match preprocessor_instruction_kind(&line[indentation..]) {
-                    None => (),
-                    Some(PreprocessorKind::If) => {
-                        preprocessor_level += 1;
-                        preprocessor_context.push(ContextEntry { line_number, indentation: preprocessor_level, line });
+        let indentation = calculate_indentation(&line);
+        if let Some(indentation) = indentation {
+            // Ignore lines looking like C preprocessor instruction, because they
+            // are often written without indentation and this breaks context.
+            match options.preprocessor {
+                Preprocessor::Preserve => (), // Do nothing, handle line as usual
+                Preprocessor::Ignore =>
+                    if preprocessor_instruction_kind(&line[indentation..]).is_some() {
                         continue;
                     },
-                    Some(PreprocessorKind::Else) => {
-                        preprocessor_context.push(ContextEntry { line_number, indentation: preprocessor_level, line });
-                        continue;
+                Preprocessor::Context =>
+                    match preprocessor_instruction_kind(&line[indentation..]) {
+                        None => (),
+                        Some(PreprocessorKind::If) => {
+                            preprocessor_level += 1;
+                            preprocessor_context.push(PreprocessorContextEntry {
+                                line: Line { number: line_number, text: line},
+                                level: preprocessor_level });
+                            continue;
+                        },
+                        Some(PreprocessorKind::Else) => {
+                            preprocessor_context.push(PreprocessorContextEntry {
+                                line: Line { number: line_number, text: line },
+                                level: preprocessor_level });
+                            continue;
+                        },
+                        Some(PreprocessorKind::Endif) => {
+                            let top = preprocessor_context.iter().rposition(|e: &PreprocessorContextEntry| {
+                                e.level < preprocessor_level
+                            });
+                            preprocessor_context.truncate(top.map(|t| t+1).unwrap_or(0));
+                            preprocessor_level -= 1;
+                            continue;
+                        },
+                        Some(PreprocessorKind::Other) => continue,
                     },
-                    Some(PreprocessorKind::Endif) => {
-                        let top = preprocessor_context.iter().rposition(|e: &ContextEntry| {
-                            e.indentation < preprocessor_level
-                        });
-                        preprocessor_context.truncate(top.map(|t| t+1).unwrap_or(0));
-                        preprocessor_level -= 1;
-                        continue;
-                    },
-                    Some(PreprocessorKind::Other) => continue,
-                },
+            }
+
+            let top = context.iter().rposition(|e: &ContextEntry| {
+                // Upper scopes are always preserved.
+                if e.indentation < indentation { return true; }
+                if e.indentation > indentation { return false; }
+
+                if !options.smart_branches { return false; }
+
+                let stripped_line = &line[indentation..];
+                let stripped_context_line = &e.line.text[e.indentation..];
+                for &(prefix, context_prefixes) in SMART_BRANCH_PREFIXES {
+                    if stripped_line.starts_with(prefix) {
+                        return context_prefixes.iter().any(|p| stripped_context_line.starts_with(p));
+                    }
+                }
+
+                return false;
+            });
+            context.truncate(top.map(|t| t+1).unwrap_or(0));
+        } else {
+            was_empty_line = true;
         }
 
-        let top = context.iter().rposition(|e: &ContextEntry| {
-            // Upper scopes are always preserved.
-            if e.indentation < indentation { return true; }
-            if e.indentation > indentation { return false; }
-
-            if !options.smart_branches { return false; }
-
-            let stripped_line = &line[indentation..];
-            let stripped_context_line = &e.line[e.indentation..];
-            for &(prefix, context_prefixes) in SMART_BRANCH_PREFIXES {
-                if stripped_line.starts_with(prefix) {
-                    return context_prefixes.iter().any(|p| stripped_context_line.starts_with(p));
-                }
-            }
-
-            return false;
-        });
-        context.truncate(top.map(|t| t+1).unwrap_or(0));
+        while !surrounding_context.is_empty() &&
+               surrounding_context[0].line.number <
+                    line_number - options.context_lines_before {
+           let entry = surrounding_context.pop_front().unwrap();
+           if entry.print_on_discard {
+               if entry.line.number > last_printed_lineno + 1 {
+                   printer.print_ellipsis();
+               }
+               printer.print_context(entry.line.number, &entry.line.text);
+               last_printed_lineno = entry.line.number;
+           }
+        }
 
         let matched = {
             let mut matches = pattern.find_iter(&line).peekable();
@@ -458,24 +540,33 @@ fn process_input(input: &mut BufRead,
                 }
 
                 {
-                    let combined_context = itertools::merge_join_by(&context, &preprocessor_context, |ci, pci|
-                        ci.line_number.cmp(&pci.line_number)
-                    ).map(|either| {
-                        use itertools::EitherOrBoth::{Left, Right, Both};
-                        match either {
-                            Left(l) => l,
-                            Right(l) => l,
-                            Both(_, _) => unreachable!(),
-                        }
-                    });
+                    // Merge all contexts.
+                    let mut context_iter = context.iter().map(|e| &e.line);
+                    let mut preprocessor_context_iter = preprocessor_context.iter().map(|e| &e.line);
+                    let mut surrounding_context_iter = surrounding_context.iter().map(|e| &e.line);
+                    let mut context_iters: [&mut Iterator<Item=&Line>; 3] = [
+                        &mut context_iter,
+                        &mut preprocessor_context_iter,
+                        &mut surrounding_context_iter];
+                    let combined_context = context_iters
+                        .iter_mut()
+                        .kmerge_by(|first, second| first.number < second.number)
+                        .coalesce(|first, second| {
+                            if first.number == second.number {
+                                Ok(first)
+                            } else {
+                                Err((first, second))
+                            }
+                        })
+                        .enumerate();
 
-                    for entry in combined_context {
-                        if (!was_empty_line || !printer.options.breaks) &&
-                           entry.line_number > last_printed_lineno + 1 {
+                    for (i, line) in combined_context {
+                        if (!was_empty_line || !printer.options.breaks || i != 0) &&
+                           line.number > last_printed_lineno + 1 {
                             printer.print_ellipsis();
                         }
-                        printer.print_context(entry.line_number, &entry.line);
-                        last_printed_lineno = entry.line_number;
+                        printer.print_context(line.number, &line.text);
+                        last_printed_lineno = line.number;
                     }
 
                     if (!was_empty_line || !printer.options.breaks) &&
@@ -488,6 +579,7 @@ fn process_input(input: &mut BufRead,
 
                 context.clear();
                 preprocessor_context.clear();
+                surrounding_context.clear();
                 was_empty_line = false;
                 match_found = true;
 
@@ -497,8 +589,18 @@ fn process_input(input: &mut BufRead,
             }
         };
 
-        if !matched {
-            context.push(ContextEntry { line_number, indentation, line });
+        if matched {
+            // Start counting trailing lines after match.
+            trailing_lines_left = options.context_lines_after;
+        } else {
+            if let Some(indentation) = indentation {
+                context.push(ContextEntry { line: Line { number: line_number, text: line.clone() },
+                                            indentation: indentation });
+            }
+            surrounding_context.push_back(
+                SurroundContextEntry { line: Line { number: line_number, text: line },
+                                       print_on_discard: trailing_lines_left > 0 });
+            if trailing_lines_left > 0 { trailing_lines_left -= 1; }
         }
     }
 
@@ -660,4 +762,3 @@ fn main() {
         },
     }
 }
-

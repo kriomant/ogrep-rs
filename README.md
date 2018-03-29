@@ -32,7 +32,8 @@ Ok, now we now that our file is here, but don't know target. Let's ask for some 
 
 Nope, not that useful. Let's try `ogrep`:
 
-``` ogrep arena.cc BUILD.gn
+```
+ogrep arena.cc BUILD.gn
  102: component("net") {
  385:   if (!is_nacl) {
  386:     sources += [
@@ -67,6 +68,10 @@ Here is brief feature list:
 
  * By default “if-else” branches are treated specially: if-branches are preserved so you know conditions even when match is found in “else” branch:
 
+ * Traditional context (displaying N leading and/or trailing lines around
+   matched one) is also supported with `--context/-C`, `--before-context/-B`
+   and `--after-context/-A` options.
+
   ```
  # ./ogrep filename_util_icu BUILD.gn
   102: component("net") {
@@ -76,7 +81,7 @@ Here is brief feature list:
  2228:       sources += [
  2229:         "base/filename_util_icu.cc",
  ```
- 
+
  This can be turned off with `--no-smart-branches`.
 
  * Preprocessor instructions in C files are often written without any indentation (or indentation is inserted after “#”). So tool ignores preprocessor instructions by default until `--no-ignore-preprocessor` is given.
