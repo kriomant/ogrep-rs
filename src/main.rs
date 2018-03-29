@@ -27,6 +27,7 @@ const LESS_ARGS: &[&str] = &["--quit-if-one-screen", "--RAW-CONTROL-CHARS",
 
 #[derive(Debug)]
 enum OgrepError {
+    ClapError(clap::Error),
     GitGrepWithStdinInput,
     GitGrepFailed,
     InvalidOgrepOptions,
@@ -34,6 +35,7 @@ enum OgrepError {
 impl std::error::Error for OgrepError {
     fn description(&self) -> &str {
         match *self {
+            OgrepError::ClapError(ref e) => e.description(),
             OgrepError::GitGrepWithStdinInput => "Don't use '-' input with --use-git-grep option",
             OgrepError::GitGrepFailed => "git grep failed",
             OgrepError::InvalidOgrepOptions => "OGREP_OPTIONS environment variable contains invalid UTF-8",
@@ -43,7 +45,15 @@ impl std::error::Error for OgrepError {
 impl std::fmt::Display for OgrepError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         use std::error::Error;
-        write!(f, "{}", self.description())
+        match *self {
+            OgrepError::ClapError(ref e) => write!(f, "{}", e),
+            _ => write!(f, "{}", self.description())
+        }
+    }
+}
+impl From<clap::Error> for OgrepError {
+    fn from(e: clap::Error) -> OgrepError {
+        OgrepError::ClapError(e)
     }
 }
 
@@ -240,7 +250,8 @@ impl<'o> Printer<'o> {
     }
 }
 
-fn parse_arguments<'i, Iter: Iterator<Item=OsString>>(args: Iter) -> Options {
+fn parse_arguments<'i, Iter: Iterator<Item=OsString>>(args: Iter)
+        -> Result<Options, clap::Error> {
     use clap::{App, Arg};
 
     let colors_default = UseColors::Auto.to_string();
@@ -337,28 +348,25 @@ EXIT STATUS:
 
     let (before_context, after_context) =
         if matches.is_present("both_contexts") {
-            let c: usize = value_t!(matches.value_of("both_contexts"), usize)
-                                .unwrap_or_else(|e| e.exit());
+            let c: usize = value_t!(matches.value_of("both_contexts"), usize)?;
             (c, c)
         } else {
             let before =
                 if matches.is_present("before_context") {
-                    value_t!(matches.value_of("before_context"), usize)
-                                    .unwrap_or_else(|e| e.exit())
+                    value_t!(matches.value_of("before_context"), usize)?
                 } else {
                     0
                 };
             let after =
                 if matches.is_present("after_context") {
-                    value_t!(matches.value_of("after_context"), usize)
-                                    .unwrap_or_else(|e| e.exit())
+                    value_t!(matches.value_of("after_context"), usize)?
                 } else {
                     0
                 };
             (before, after)
         };
 
-    Options {
+    Ok(Options {
         pattern: matches.value_of("pattern").expect("pattern").to_string(),
         input: match matches.value_of_os("input").unwrap_or(OsStr::new("-")) {
           path if path == "-" => InputSpec::Stdin,
@@ -367,18 +375,18 @@ EXIT STATUS:
         regex: matches.is_present("regex"),
         case_insensitive: matches.is_present("case-insensitive"),
         whole_word: matches.is_present("whole-word"),
-        use_colors: value_t!(matches, "color", UseColors).unwrap_or_else(|e| e.exit()),
-        color_scheme: value_t!(matches, "color-scheme", ColorSchemeSpec).unwrap_or_else(|e| e.exit()),
+        use_colors: value_t!(matches, "color", UseColors)?,
+        color_scheme: value_t!(matches, "color-scheme", ColorSchemeSpec)?,
         use_pager: !matches.is_present("no-pager"),
         use_git_grep: matches.is_present("use-git-grep"),
         breaks: !matches.is_present("no-breaks"),
         ellipsis: matches.is_present("ellipsis"),
         print_filename: matches.is_present("print-filename"),
         smart_branches: !matches.is_present("no-smart-branches"),
-        preprocessor: value_t!(matches, "preprocessor", Preprocessor).unwrap_or_else(|e| e.exit()),
+        preprocessor: value_t!(matches, "preprocessor", Preprocessor)?,
         context_lines_before: before_context,
         context_lines_after: after_context,
-    }
+    })
 }
 
 fn calculate_indentation(s: &str) -> Option<usize> {
@@ -621,7 +629,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
         .map(|b| OsString::from(b));
     let cmdline_args = std::env::args_os();
     let args = env_args.chain(cmdline_args.skip(1));
-    let options = parse_arguments(args);
+    let options = parse_arguments(args)?;
 
     let appearance = AppearanceOptions {
         use_colors: match options.use_colors {
@@ -757,7 +765,7 @@ fn main() {
     match real_main() {
         Ok(code) => std::process::exit(code),
         Err(err) => {
-            writeln!(std::io::stderr(), "{}", err.description()).unwrap();
+            writeln!(std::io::stderr(), "{}", err).unwrap();
             std::process::exit(2);
         },
     }
