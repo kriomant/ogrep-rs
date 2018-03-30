@@ -148,6 +148,39 @@ fn test_smart_branches_python() {
           o     bla");
 }
 
+/// Tests that branches are recognized even when there are no
+/// space after 'if'.
+#[test]
+fn test_smart_branches_no_space() {
+    test(&Options { smart_branches: true, ..default_options() },
+         "bla",
+
+         "o if(a > 0) {
+          .   bar
+          .     baz
+          o } else {
+          o   qux
+          o     bla
+          . }");
+}
+
+/// Tests that branches are NOT recognized when first words
+/// has 'if' prefix.
+#[test]
+fn test_smart_branches_if_prefix() {
+    test(&Options { smart_branches: true, ..default_options() },
+         "bla",
+
+         ". ifere(a > 0) {
+          .   bar
+          .     baz
+          o } else {
+          o   qux
+          o     bla
+          . }");
+}
+
+
 /// Tests 'preserve' mode of handling preprocessor instructions,
 /// they must be treated just like usual lines.
 #[test]

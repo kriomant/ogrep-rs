@@ -21,13 +21,21 @@ use itertools::Itertools;
 // is turned on. When line starts with given prefix, then retain
 // lines with same indentation starting with given prefixes in context.
 const SMART_BRANCH_PREFIXES: &[(&str, &[&str])] = &[
-    ("} else ", &["if ", "} else if "]),
-    ("else:", &["if ", "else if "]),
-    ("case ", &["switch "]),
+    ("} else ", &["if", "} else if"]),
+    ("else:", &["if", "else if"]),
+    ("case", &["switch"]),
 ];
 
 const LESS_ARGS: &[&str] = &["--quit-if-one-screen", "--RAW-CONTROL-CHARS",
                              "--quit-on-intr", "--no-init"];
+
+/// Checks whether `text` starts with `prefix` and there is word boundary
+/// right after prefix, i.e. either `text` ends there or next character
+/// is not alphanumberic.
+fn starts_with_word(text: &str, prefix: &str) -> bool {
+    text.starts_with(prefix) &&
+        text[prefix.len()..].chars().next().map(|c| !c.is_ascii_alphanumeric()).unwrap_or(true)
+}
 
 #[derive(Debug)]
 enum OgrepError {
@@ -420,10 +428,10 @@ struct SurroundContextEntry {
 enum PreprocessorKind { If, Else, Endif, Other }
 fn preprocessor_instruction_kind(s: &str) -> Option<PreprocessorKind> {
     match s {
-        _ if s.starts_with("#if ") => Some(PreprocessorKind::If),
-        _ if s.starts_with("#else") => Some(PreprocessorKind::Else),
-        _ if s.starts_with("#endif") => Some(PreprocessorKind::Endif),
-        _ if s.starts_with("#") => Some(PreprocessorKind::Other),
+        _ if starts_with_word(s, "#if") => Some(PreprocessorKind::If),
+        _ if starts_with_word(s, "#else") => Some(PreprocessorKind::Else),
+        _ if starts_with_word(s, "#endif") => Some(PreprocessorKind::Endif),
+        _ if starts_with_word(s, "#") => Some(PreprocessorKind::Other),
         _ => None,
     }
 }
@@ -513,8 +521,8 @@ fn process_input(input: &mut BufRead,
                 let stripped_line = &line[indentation..];
                 let stripped_context_line = &e.line.text[e.indentation..];
                 for &(prefix, context_prefixes) in SMART_BRANCH_PREFIXES {
-                    if stripped_line.starts_with(prefix) {
-                        return context_prefixes.iter().any(|p| stripped_context_line.starts_with(p));
+                    if starts_with_word(stripped_line, prefix) {
+                        return context_prefixes.iter().any(|p| starts_with_word(stripped_context_line, p));
                     }
                 }
 
