@@ -3,6 +3,9 @@ extern crate regex;
 extern crate itertools;
 extern crate termion;
 
+#[cfg(test)] #[macro_use(assert_diff)] extern crate difference;
+#[cfg(test)] mod tests;
+
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::borrow::Cow;
@@ -610,6 +613,16 @@ fn process_input(input: &mut BufRead,
                                        print_on_discard: trailing_lines_left > 0 });
             if trailing_lines_left > 0 { trailing_lines_left -= 1; }
         }
+    }
+
+    while let Some(&SurroundContextEntry { print_on_discard: true, ..}) =
+            surrounding_context.front() {
+       let entry = surrounding_context.pop_front().unwrap();
+       if entry.line.number > last_printed_lineno + 1 {
+           printer.print_ellipsis();
+       }
+       printer.print_context(entry.line.number, &entry.line.text);
+       last_printed_lineno = entry.line.number;
     }
 
     Ok(match_found)
