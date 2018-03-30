@@ -119,6 +119,20 @@ fn test_smart_branches() {
           . }");
 }
 
+/// Tests that smart-branches feature handles Python code.
+#[test]
+fn test_smart_branches_python() {
+    test(&Options { smart_branches: true, ..default_options() },
+         "bla",
+
+         "o if a > 0:
+          .   bar
+          .     baz
+          o else:
+          o   qux
+          o     bla");
+}
+
 /// Tests 'preserve' mode of handling preprocessor instructions,
 /// they must be treated just like usual lines.
 #[test]

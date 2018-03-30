@@ -22,6 +22,7 @@ use itertools::Itertools;
 // lines with same indentation starting with given prefixes in context.
 const SMART_BRANCH_PREFIXES: &[(&str, &[&str])] = &[
     ("} else ", &["if ", "} else if "]),
+    ("else:", &["if ", "else if "]),
     ("case ", &["switch "]),
 ];
 
