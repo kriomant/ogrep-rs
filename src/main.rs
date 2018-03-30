@@ -233,9 +233,9 @@ impl<'o> Printer<'o> {
 
     fn print_ellipsis(&mut self) {
         if self.options.ellipsis {
-            writeln!(self.output, "   {dim}{}{nodim}", "…",
-                     dim=termion::style::Faint,
-                     nodim=termion::style::NoFaint).unwrap();
+            writeln!(self.output, "   {color}{}{nocolor}", "…",
+                     color=self.options.color_scheme.context_line.0,
+                     nocolor=self.options.color_scheme.context_line.1).unwrap();
         }
     }
 

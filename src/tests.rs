@@ -40,8 +40,11 @@ fn default_options() -> Options {
 /// `pattern` is fixed string to search for,
 /// `specification` should be written in special format which is used to
 /// prepare both input text and expected result. Each line must start with
-/// either ". " or "o ". ". " means that line must be ommitted from result,
-/// and "o " means that line should be printed.
+/// ". ", "o " or "~ ":
+///   * ". " means that line must be ommitted from result,
+///   * "o " means that line should be printed,
+///   * "~ " means that line not present in source should be printed, also
+///     note that line number won't be prepended.
 fn test(options: &Options, pattern: &str, specification: &str) {
     let mut input = String::with_capacity(specification.len());
     let mut expected_output = String::with_capacity(specification.len());
@@ -50,12 +53,24 @@ fn test(options: &Options, pattern: &str, specification: &str) {
     for line in specification.lines() {
         let line = line.trim_left();
         if line.is_empty() { continue }
-        assert!(line.starts_with(". ") || line.starts_with("o "));
-        line_number += 1;
+        assert!(&[". ", "o ", "~ "].iter().any(|p| line.starts_with(p)));
+        let (to_input, to_expected, with_line_number) = match line.chars().next().unwrap() {
+            '.' => (true, false, false),
+            'o' => (true, true, true),
+            '~' => (false, true, false),
+            _ => unreachable!()
+        };
 
-        write!(input, "{}\n", &line[2..]).unwrap();
-        if line.starts_with("o ") {
-            write!(expected_output, "{:4}: {}\n", line_number, &line[2..]).unwrap();
+        if to_input {
+            line_number += 1;
+            write!(input, "{}\n", &line[2..]).unwrap();
+        }
+        if to_expected {
+            if with_line_number {
+                write!(expected_output, "{:4}: {}\n", line_number, &line[2..]).unwrap();
+            } else {
+                write!(expected_output, "   {}\n", &line[2..]).unwrap();
+            }
         }
     }
 
@@ -214,4 +229,20 @@ fn test_context_after() {
           .     boo
           o     bla
           o     pug");
+}
+
+/// Tests that ellipsis may be printed when lines are skipped.
+#[test]
+fn test_ellipsis() {
+    test(&Options { ellipsis: true, ..default_options() },
+         "bla",
+
+         "o foo
+          .   bar
+          .     baz
+          ~ …
+          o   qux
+          .     boo
+          ~ …
+          o     bla");
 }
