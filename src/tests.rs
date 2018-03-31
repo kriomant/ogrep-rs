@@ -3,6 +3,8 @@ use super::*;
 use std::path::PathBuf;
 use regex::Regex;
 
+use std::fmt::Write as FmtWrite;
+
 /// Returns default options for tests.
 /// Note that this is not the same as options used by CLI by default.
 /// CLI by default enabled some features which are useful for most users,
