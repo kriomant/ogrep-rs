@@ -403,6 +403,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
                     let mut file = std::fs::File::open(&filepath)?;
                     let mut input = std::io::BufReader::new(file);
                     match_found |= process_input(&mut input, &re, &options, Some(filepath), &mut printer)?;
+                    line.clear();
                 }
             };
 
