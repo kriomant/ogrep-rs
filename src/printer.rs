@@ -21,10 +21,28 @@ pub struct AppearanceOptions {
 pub struct Printer<'o> {
 	pub output: &'o mut std::io::Write,
     pub options: AppearanceOptions,
+    last_printed_lineno: usize,
+    was_break: bool,
 }
 
 impl<'o> Printer<'o> {
+    pub fn new(output: &'o mut std::io::Write, options: AppearanceOptions) -> Self {
+        Printer {
+            output: output,
+            options: options,
+            last_printed_lineno: 0,
+            was_break: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.last_printed_lineno = 0;
+        self.was_break = false;
+    }
+
     pub fn print_context(&mut self, line_number: usize, line: &str) {
+        assert!(line_number > self.last_printed_lineno);
+        self.maybe_print_ellipsis(line_number);
         if self.options.use_colors {
             writeln!(self.output, "{color}{:4}: {}{nocolor}", line_number, line,
                      color=self.options.color_scheme.context_line.0,
@@ -32,10 +50,13 @@ impl<'o> Printer<'o> {
         } else {
             writeln!(self.output, "{:4}: {}", line_number, line).unwrap();
         }
+        self.last_printed_lineno = line_number;
     }
 
     pub fn print_match<'m, M>(&mut self, line_number: usize, line: &str, matches: M)
             where M: Iterator<Item=regex::Match<'m>> {
+        assert!(line_number > self.last_printed_lineno);
+        self.maybe_print_ellipsis(line_number);
         if self.options.use_colors {
             let mut buf = String::new();
             let mut pos = 0usize;
@@ -53,11 +74,23 @@ impl<'o> Printer<'o> {
         } else {
             writeln!(self.output, "{:4}: {}", line_number, line).unwrap();
         }
+        self.last_printed_lineno = line_number;
     }
 
     pub fn print_break(&mut self) {
         if self.options.breaks {
             writeln!(self.output).unwrap();
+            self.was_break = true;
+        }
+    }
+
+    fn maybe_print_ellipsis(&mut self, line_number: usize) {
+        if self.was_break {
+            self.was_break = false;
+            return;
+        }
+        if line_number > self.last_printed_lineno + 1 {
+            self.print_ellipsis();
         }
     }
 
@@ -70,6 +103,7 @@ impl<'o> Printer<'o> {
     }
 
     pub fn print_filename(&mut self, filename: &std::path::Path) {
+        assert!(self.last_printed_lineno == 0);
         if self.options.print_filename {
             self.output.write(b"\n").unwrap();
             if self.options.use_colors {

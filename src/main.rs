@@ -108,8 +108,6 @@ fn process_input(input: &mut BufRead,
     // Whether empty line was met since last match.
     let mut was_empty_line = false;
 
-    let mut last_printed_lineno = 0usize;
-
     // How many trailing lines after match left to print.
     let mut trailing_lines_left = 0usize;
 
@@ -181,11 +179,7 @@ fn process_input(input: &mut BufRead,
                     line_number - options.context_lines_before {
            let entry = surrounding_context.pop_front().unwrap();
            if entry.print_on_discard {
-               if entry.line.number > last_printed_lineno + 1 {
-                   printer.print_ellipsis();
-               }
                printer.print_context(entry.line.number, &entry.line.text);
-               last_printed_lineno = entry.line.number;
            }
         }
 
@@ -223,21 +217,11 @@ fn process_input(input: &mut BufRead,
                         })
                         .enumerate();
 
-                    for (i, line) in combined_context {
-                        if (!was_empty_line || !printer.options.breaks || i != 0) &&
-                           line.number > last_printed_lineno + 1 {
-                            printer.print_ellipsis();
-                        }
+                    for (_, line) in combined_context {
                         printer.print_context(line.number, &line.text);
-                        last_printed_lineno = line.number;
                     }
 
-                    if (!was_empty_line || !printer.options.breaks) &&
-                       line_number > last_printed_lineno + 1 {
-                        printer.print_ellipsis();
-                    }
                     printer.print_match(line_number, &line, matches);
-                    last_printed_lineno = line_number;
                 }
 
                 context.clear();
@@ -270,11 +254,7 @@ fn process_input(input: &mut BufRead,
     while let Some(&SurroundContextEntry { print_on_discard: true, ..}) =
             surrounding_context.front() {
        let entry = surrounding_context.pop_front().unwrap();
-       if entry.line.number > last_printed_lineno + 1 {
-           printer.print_ellipsis();
-       }
        printer.print_context(entry.line.number, &entry.line.text);
-       last_printed_lineno = entry.line.number;
     }
 
     Ok(match_found)
@@ -352,7 +332,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
     {
         let mut output_lock = output.lock();
 
-        let mut printer = Printer { output: output_lock.as_write(), options: appearance };
+        let mut printer = Printer::new(output_lock.as_write(), appearance);
 
         let mut pattern: Cow<str> =
             if options.regex {
@@ -398,11 +378,16 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
                 while let Ok(bytes_count) = reader.read_line(&mut line) {
                     if bytes_count == 0 { break }
 
-                    let filepath = std::path::Path::new(line.trim_right_matches('\n'));
+                    {
+                        let filepath = std::path::Path::new(line.trim_right_matches('\n'));
 
-                    let mut file = std::fs::File::open(&filepath)?;
-                    let mut input = std::io::BufReader::new(file);
-                    match_found |= process_input(&mut input, &re, &options, Some(filepath), &mut printer)?;
+                        let mut file = std::fs::File::open(&filepath)?;
+                        let mut input = std::io::BufReader::new(file);
+
+                        printer.reset();
+                        match_found |= process_input(&mut input, &re, &options, Some(filepath), &mut printer)?;
+                    }
+
                     line.clear();
                 }
             };

@@ -42,36 +42,47 @@ fn default_options() -> Options {
 /// `pattern` is fixed string to search for,
 /// `specification` should be written in special format which is used to
 /// prepare both input text and expected result. Each line must start with
-/// ". ", "o " or "~ ":
-///   * ". " means that line must be ommitted from result,
-///   * "o " means that line should be printed,
-///   * "~ " means that line not present in source should be printed, also
-///     note that line number won't be prepended.
+/// be one of:
+///   * line starting with ". " means that line must be ommitted from result,
+///   * line starting with "o " means that line must be printed,
+///   * "~ …" means that ellipsis should be printed
+///   * "~" means that break should be printed
 fn test(options: &Options, pattern: &str, specification: &str) {
     let mut input = String::with_capacity(specification.len());
     let mut expected_output = String::with_capacity(specification.len());
+
+    fn rest_of_line(line: &str) -> &str {
+        assert!(!line.is_empty());
+        if line.len() == 1 {
+            return "";
+        } else {
+            assert_eq!(line.chars().skip(1).next(), Some(' '));
+            return &line[2..];
+        }
+    }
 
     let mut line_number = 0usize;
     for line in specification.lines() {
         let line = line.trim_left();
         if line.is_empty() { continue }
-        assert!(&[". ", "o ", "~ "].iter().any(|p| line.starts_with(p)));
-        let (to_input, to_expected, with_line_number) = match line.chars().next().unwrap() {
-            '.' => (true, false, false),
-            'o' => (true, true, true),
-            '~' => (false, true, false),
-            _ => unreachable!()
+        let (to_input, to_expected) = match line {
+            l if l.starts_with(".") => (Some(rest_of_line(line)), None),
+            l if l.starts_with("o") => (Some(rest_of_line(line)),
+                                        Some((rest_of_line(line), true))),
+            "~ …" => (None, Some(("   …", false))),
+            "~" => (None, Some(("", false))),
+            _ => panic!(format!("unexpected specification line: {}", line)),
         };
 
-        if to_input {
+        if let Some(to_input) = to_input {
             line_number += 1;
-            write!(input, "{}\n", &line[2..]).unwrap();
+            write!(input, "{}\n", to_input).unwrap();
         }
-        if to_expected {
+        if let Some((expected, with_line_number)) = to_expected {
             if with_line_number {
-                write!(expected_output, "{:4}: {}\n", line_number, &line[2..]).unwrap();
+                write!(expected_output, "{:4}: {}\n", line_number, expected).unwrap();
             } else {
-                write!(expected_output, "   {}\n", &line[2..]).unwrap();
+                write!(expected_output, "{}\n", expected).unwrap();
             }
         }
     }
@@ -80,9 +91,9 @@ fn test(options: &Options, pattern: &str, specification: &str) {
     let filepath = PathBuf::new();
     let mut result = std::io::Cursor::new(Vec::new());
     {
-        let mut printer = Printer {
-            output: &mut result,
-            options: AppearanceOptions {
+        let mut printer = Printer::new(
+            &mut result,
+            AppearanceOptions {
                 use_colors: false,
                 color_scheme: ColorScheme {
                     filename:     ("".to_string(), "".to_string()),
@@ -92,8 +103,7 @@ fn test(options: &Options, pattern: &str, specification: &str) {
                 breaks: options.breaks,
                 ellipsis: options.ellipsis,
                 print_filename: options.print_filename,
-            }
-        };
+            });
         let mut input = std::io::BufReader::new(std::io::Cursor::new(input));
         process_input(&mut input, &regex, &options, Some(&filepath), &mut printer).expect("i/o error");
     }
@@ -279,5 +289,42 @@ fn test_ellipsis() {
           o   qux
           .     boo
           ~ …
+          o     bla");
+}
+
+/// Tests that breaks are printed instead of ellipsis when there
+/// was empty line in source text.
+#[test]
+fn test_breaks() {
+    test(&Options { breaks: true, ..default_options() },
+         "bla",
+
+         "o foo
+          .   bar
+          .     baz
+          .
+          o   qux
+          o     bla
+          .
+          ~
+          o     bla");
+}
+
+/// Tests that breaks are printed instead of ellipsis when there
+/// was empty line in source text.
+#[test]
+fn test_breaks_incorrect() {
+    test(&Options { breaks: true, ..default_options() },
+         "bla",
+
+         "o foo
+          .   bar
+          .     baz
+          .
+          o   qux
+          o     bla
+          ~
+          o   fux
+          .
           o     bla");
 }
