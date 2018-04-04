@@ -1,4 +1,5 @@
 use super::*;
+use super::options::*;
 
 use std::path::PathBuf;
 use regex::Regex;

@@ -7,6 +7,9 @@ mod error;
 mod options;
 mod printer;
 mod io;
+mod context;
+mod contexts;
+mod util;
 
 #[cfg(test)] #[macro_use(assert_diff)] extern crate difference;
 #[cfg(test)] mod tests;
@@ -20,63 +23,19 @@ use std::io::Write as IoWrite;
 use itertools::Itertools;
 
 use error::OgrepError;
-use options::{InputSpec, ColorSchemeSpec, Options, Preprocessor, UseColors, parse_arguments};
+use options::{InputSpec, ColorSchemeSpec, Options, UseColors, parse_arguments};
 use printer::{AppearanceOptions, ColorScheme, Printer};
 use io::{Input, Output};
-
-// This prefixes are used when "smart branches" feature
-// is turned on. When line starts with given prefix, then retain
-// lines with same indentation starting with given prefixes in context.
-const SMART_BRANCH_PREFIXES: &[(&str, &[&str])] = &[
-    ("} else ", &["if", "} else if"]),
-    ("else:", &["if", "else if"]),
-    ("case", &["switch"]),
-];
+use context::{Context, Line, Action};
+use contexts::indentation::IndentationContext;
+use contexts::preprocessor::PreprocessorContext;
+use contexts::textual::TextualContext;
 
 const LESS_ARGS: &[&str] = &["--quit-if-one-screen", "--RAW-CONTROL-CHARS",
                              "--quit-on-intr", "--no-init"];
 
-/// Checks whether `text` starts with `prefix` and there is word boundary
-/// right after prefix, i.e. either `text` ends there or next character
-/// is not alphanumberic.
-fn starts_with_word(text: &str, prefix: &str) -> bool {
-    text.starts_with(prefix) &&
-        text[prefix.len()..].chars().next().map(|c| !c.is_ascii_alphanumeric()).unwrap_or(true)
-}
-
 fn calculate_indentation(s: &str) -> Option<usize> {
     s.find(|c: char| !c.is_whitespace())
-}
-
-struct Line {
-    number: usize,
-    text: String,
-}
-
-struct ContextEntry {
-    line: Line,
-    indentation: usize,
-}
-
-struct PreprocessorContextEntry {
-    line: Line,
-    level: usize,
-}
-
-struct SurroundContextEntry {
-    line: Line,
-    print_on_discard: bool,
-}
-
-enum PreprocessorKind { If, Else, Endif, Other }
-fn preprocessor_instruction_kind(s: &str) -> Option<PreprocessorKind> {
-    match s {
-        _ if starts_with_word(s, "#if") => Some(PreprocessorKind::If),
-        _ if starts_with_word(s, "#else") => Some(PreprocessorKind::Else),
-        _ if starts_with_word(s, "#endif") => Some(PreprocessorKind::Endif),
-        _ if starts_with_word(s, "#") => Some(PreprocessorKind::Other),
-        _ => None,
-    }
 }
 
 fn process_input(input: &mut BufRead,
@@ -90,17 +49,20 @@ fn process_input(input: &mut BufRead,
     // so on. Once line is printed, it is removed from context.
     // Context may contain lines with identical identation due to smart if-else branches
     // handling.
-    let mut context = Vec::new();
+    let mut indentation_context = IndentationContext::new(&options);
 
     // Secondary stack for preprocessor instructions.
-    let mut preprocessor_level = 0usize;
-    let mut preprocessor_context = Vec::new();
+    let mut preprocessor_context = PreprocessorContext::new(&options);
 
     // Context as it is understood by usual 'grep' - fixed number of
     // lines before and after matched one.
-    let mut surrounding_context =
-        std::collections::VecDeque::<SurroundContextEntry>::with_capacity(
-            options.context_lines_before + options.context_lines_after);
+    let mut textual_context = TextualContext::new(&options);
+
+    let mut contexts = [
+        &mut textual_context as &mut Context,
+        &mut preprocessor_context,
+        &mut indentation_context,
+    ];
 
     // Whether at least one match was already found.
     let mut match_found = false;
@@ -108,79 +70,20 @@ fn process_input(input: &mut BufRead,
     // Whether empty line was met since last match.
     let mut was_empty_line = false;
 
-    // How many trailing lines after match left to print.
-    let mut trailing_lines_left = 0usize;
-
-    for (line_number, line) in input.lines().enumerate().map(|(n, l)| (n+1, l)) {
+    'lines: for (line_number, line) in input.lines().enumerate().map(|(n, l)| (n+1, l)) {
         let line = line?;
 
         let indentation = calculate_indentation(&line);
-        if let Some(indentation) = indentation {
-            // Ignore lines looking like C preprocessor instruction, because they
-            // are often written without indentation and this breaks context.
-            match options.preprocessor {
-                Preprocessor::Preserve => (), // Do nothing, handle line as usual
-                Preprocessor::Ignore =>
-                    if preprocessor_instruction_kind(&line[indentation..]).is_some() {
-                        continue;
-                    },
-                Preprocessor::Context =>
-                    match preprocessor_instruction_kind(&line[indentation..]) {
-                        None => (),
-                        Some(PreprocessorKind::If) => {
-                            preprocessor_level += 1;
-                            preprocessor_context.push(PreprocessorContextEntry {
-                                line: Line { number: line_number, text: line},
-                                level: preprocessor_level });
-                            continue;
-                        },
-                        Some(PreprocessorKind::Else) => {
-                            preprocessor_context.push(PreprocessorContextEntry {
-                                line: Line { number: line_number, text: line },
-                                level: preprocessor_level });
-                            continue;
-                        },
-                        Some(PreprocessorKind::Endif) => {
-                            let top = preprocessor_context.iter().rposition(|e: &PreprocessorContextEntry| {
-                                e.level < preprocessor_level
-                            });
-                            preprocessor_context.truncate(top.map(|t| t+1).unwrap_or(0));
-                            preprocessor_level -= 1;
-                            continue;
-                        },
-                        Some(PreprocessorKind::Other) => continue,
-                    },
-            }
-
-            let top = context.iter().rposition(|e: &ContextEntry| {
-                // Upper scopes are always preserved.
-                if e.indentation < indentation { return true; }
-                if e.indentation > indentation { return false; }
-
-                if !options.smart_branches { return false; }
-
-                let stripped_line = &line[indentation..];
-                let stripped_context_line = &e.line.text[e.indentation..];
-                for &(prefix, context_prefixes) in SMART_BRANCH_PREFIXES {
-                    if starts_with_word(stripped_line, prefix) {
-                        return context_prefixes.iter().any(|p| starts_with_word(stripped_context_line, p));
-                    }
-                }
-
-                return false;
-            });
-            context.truncate(top.map(|t| t+1).unwrap_or(0));
-        } else {
+        if indentation.is_none() {
             was_empty_line = true;
         }
 
-        while !surrounding_context.is_empty() &&
-               surrounding_context[0].line.number <
-                    line_number - options.context_lines_before {
-           let entry = surrounding_context.pop_front().unwrap();
-           if entry.print_on_discard {
-               printer.print_context(entry.line.number, &entry.line.text);
-           }
+        for mut context in &mut contexts {
+            match context.pre_line(&Line { text: line.clone(), number: line_number},
+                                   indentation, printer) {
+                Action::Skip => continue 'lines,
+                Action::Continue => (),
+            }
         }
 
         let matched = {
@@ -198,15 +101,8 @@ fn process_input(input: &mut BufRead,
 
                 {
                     // Merge all contexts.
-                    let mut context_iter = context.iter().map(|e| &e.line);
-                    let mut preprocessor_context_iter = preprocessor_context.iter().map(|e| &e.line);
-                    let mut surrounding_context_iter = surrounding_context.iter().map(|e| &e.line);
-                    let mut context_iters: [&mut Iterator<Item=&Line>; 3] = [
-                        &mut context_iter,
-                        &mut preprocessor_context_iter,
-                        &mut surrounding_context_iter];
-                    let combined_context = context_iters
-                        .iter_mut()
+                    let combined_context = contexts.iter_mut()
+                        .map(|c| c.dump())
                         .kmerge_by(|first, second| first.number < second.number)
                         .coalesce(|first, second| {
                             if first.number == second.number {
@@ -224,9 +120,9 @@ fn process_input(input: &mut BufRead,
                     printer.print_match(line_number, &line, matches);
                 }
 
-                context.clear();
-                preprocessor_context.clear();
-                surrounding_context.clear();
+                for mut context in &mut contexts {
+                    context.clear();
+                }
                 was_empty_line = false;
                 match_found = true;
 
@@ -236,25 +132,16 @@ fn process_input(input: &mut BufRead,
             }
         };
 
-        if matched {
-            // Start counting trailing lines after match.
-            trailing_lines_left = options.context_lines_after;
-        } else {
-            if let Some(indentation) = indentation {
-                context.push(ContextEntry { line: Line { number: line_number, text: line.clone() },
-                                            indentation: indentation });
+        if !matched {
+            for mut context in &mut contexts {
+                context.post_line(&Line { number: line_number, text: line.clone() },
+                                  indentation);
             }
-            surrounding_context.push_back(
-                SurroundContextEntry { line: Line { number: line_number, text: line },
-                                       print_on_discard: trailing_lines_left > 0 });
-            if trailing_lines_left > 0 { trailing_lines_left -= 1; }
         }
     }
 
-    while let Some(&SurroundContextEntry { print_on_discard: true, ..}) =
-            surrounding_context.front() {
-       let entry = surrounding_context.pop_front().unwrap();
-       printer.print_context(entry.line.number, &entry.line.text);
+    for mut context in &mut contexts {
+        context.end(printer);
     }
 
     Ok(match_found)
