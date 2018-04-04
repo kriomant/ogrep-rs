@@ -46,6 +46,28 @@ It is even better, because `ogrep` can use colors, here is a picture:
 
 ![](colored.png)
 
+## Installation
+
+### Using Cargo (any platform)
+
+Install [Rust and Cargo](https://www.rust-lang.org/install.html), if you haven't yet, then
+
+```sh
+cargo install ogrep-rs
+```
+
+### MacOS
+
+Install [Homebrew](https://brew.sh), then
+
+```sh
+brew install kriomant/ogrep-rs/ogrep-rs
+```
+
+### Other platforms
+
+Sorry, not yet, but I'm working on it. Use Cargo for now.
+
 ## Options
 
 There are plently of available options, run with `--help` to list them.
