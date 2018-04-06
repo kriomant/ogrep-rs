@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "ogrep"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clap 2.30.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "difference 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
