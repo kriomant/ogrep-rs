@@ -11,7 +11,6 @@ pub struct ColorScheme {
 }
 
 pub struct AppearanceOptions {
-    pub use_colors: bool,
     pub color_scheme: ColorScheme,
     pub breaks: bool,
     pub ellipsis: bool,
@@ -43,13 +42,9 @@ impl<'o> Printer<'o> {
     pub fn print_context(&mut self, line_number: usize, line: &str) {
         assert!(line_number > self.last_printed_lineno);
         self.maybe_print_ellipsis(line_number);
-        if self.options.use_colors {
-            writeln!(self.output, "{color}{:4}: {}{nocolor}", line_number, line,
-                     color=self.options.color_scheme.context_line.0,
-                     nocolor=self.options.color_scheme.context_line.1).unwrap();
-        } else {
-            writeln!(self.output, "{:4}: {}", line_number, line).unwrap();
-        }
+        writeln!(self.output, "{color}{:4}: {}{nocolor}", line_number, line,
+                 color=self.options.color_scheme.context_line.0,
+                 nocolor=self.options.color_scheme.context_line.1).unwrap();
         self.last_printed_lineno = line_number;
     }
 
@@ -57,23 +52,18 @@ impl<'o> Printer<'o> {
             where M: Iterator<Item=regex::Match<'m>> {
         assert!(line_number > self.last_printed_lineno);
         self.maybe_print_ellipsis(line_number);
-        if self.options.use_colors {
-            let mut buf = String::new();
-            let mut pos = 0usize;
-            for m in matches {
-                buf.push_str(&line[pos..m.start()]);
-                write!(&mut buf, "{color}{}{nocolor}", m.as_str(),
-                       color=self.options.color_scheme.matched_part.0,
-                       nocolor=self.options.color_scheme.matched_part.1).unwrap();
-                pos = m.end();
-            }
-            buf.push_str(&line[pos..]);
-
-            writeln!(self.output, "{:4}: {}", line_number, buf).unwrap();
-
-        } else {
-            writeln!(self.output, "{:4}: {}", line_number, line).unwrap();
+        let mut buf = String::new();
+        let mut pos = 0usize;
+        for m in matches {
+            buf.push_str(&line[pos..m.start()]);
+            write!(&mut buf, "{color}{}{nocolor}", m.as_str(),
+                   color=self.options.color_scheme.matched_part.0,
+                   nocolor=self.options.color_scheme.matched_part.1).unwrap();
+            pos = m.end();
         }
+        buf.push_str(&line[pos..]);
+
+        writeln!(self.output, "{:4}: {}", line_number, buf).unwrap();
         self.last_printed_lineno = line_number;
     }
 
@@ -106,13 +96,9 @@ impl<'o> Printer<'o> {
         assert!(self.last_printed_lineno == 0);
         if self.options.print_filename {
             self.output.write(b"\n").unwrap();
-            if self.options.use_colors {
-                write!(&mut self.output, "{}", self.options.color_scheme.filename.0).unwrap();
-                self.output.write(filename.as_os_str().as_bytes()).unwrap();
-                write!(&mut self.output, "{}", self.options.color_scheme.filename.1).unwrap();
-            } else {
-                self.output.write_all(filename.as_os_str().as_bytes()).unwrap();
-            }
+            write!(&mut self.output, "{}", self.options.color_scheme.filename.0).unwrap();
+            self.output.write(filename.as_os_str().as_bytes()).unwrap();
+            write!(&mut self.output, "{}", self.options.color_scheme.filename.1).unwrap();
             self.output.write(b"\n\n").unwrap();
         }
     }

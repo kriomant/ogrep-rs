@@ -164,27 +164,35 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
     let options = parse_arguments(args)?;
 
     let appearance = AppearanceOptions {
-        use_colors: match options.use_colors {
-            UseColors::Always => true,
-            UseColors::Never => false,
-            UseColors::Auto => termion::is_tty(&std::io::stdout()),
-        },
         color_scheme: {
             use termion::style::{Faint, NoFaint, Bold, Underline, NoUnderline, Reset as ResetStyle};
             use termion::color::{Fg, Blue, Red, Reset};
-            match options.color_scheme {
-                ColorSchemeSpec::Grey => ColorScheme {
-                    filename:     (format!("{}", Underline), format!("{}", NoUnderline)),
-                    // I wish to use `NoBold` here, but it doesn't work, at least on
-                    // Mac with iTerm2. So use `Reset`.
-                    matched_part: (format!("{}", Bold),      format!("{}", ResetStyle)),
-                    context_line: (format!("{}", Faint),     format!("{}", NoFaint)),
-                },
-                ColorSchemeSpec::Colored => ColorScheme {
-                    filename: (format!("{}", Fg(Blue)), format!("{}", Fg(Reset))),
-                    matched_part: (format!("{}", Fg(Red)), format!("{}", Fg(Reset))),
-                    context_line: (format!("{}", Faint), format!("{}", ResetStyle)),
-                },
+            let use_colors = match options.use_colors {
+                UseColors::Always => true,
+                UseColors::Never => false,
+                UseColors::Auto => termion::is_tty(&std::io::stdout()),
+            };
+            if use_colors {
+                match options.color_scheme {
+                    ColorSchemeSpec::Grey => ColorScheme {
+                        filename:     (format!("{}", Underline), format!("{}", NoUnderline)),
+                        // I wish to use `NoBold` here, but it doesn't work, at least on
+                        // Mac with iTerm2. So use `Reset`.
+                        matched_part: (format!("{}", Bold),      format!("{}", ResetStyle)),
+                        context_line: (format!("{}", Faint),     format!("{}", NoFaint)),
+                    },
+                    ColorSchemeSpec::Colored => ColorScheme {
+                        filename: (format!("{}", Fg(Blue)), format!("{}", Fg(Reset))),
+                        matched_part: (format!("{}", Fg(Red)), format!("{}", Fg(Reset))),
+                        context_line: (format!("{}", Faint), format!("{}", ResetStyle)),
+                    },
+                }
+            } else {
+                ColorScheme {
+                    filename: (String::new(), String::new()),
+                    matched_part: (String::new(), String::new()),
+                    context_line: (String::new(), String::new()),
+                }
             }
         },
         breaks: options.breaks,

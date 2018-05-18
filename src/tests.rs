@@ -95,7 +95,6 @@ fn test(options: &Options, pattern: &str, specification: &str) {
         let mut printer = Printer::new(
             &mut result,
             AppearanceOptions {
-                use_colors: false,
                 color_scheme: ColorScheme {
                     filename:     ("".to_string(), "".to_string()),
                     matched_part: ("".to_string(), "".to_string()),
