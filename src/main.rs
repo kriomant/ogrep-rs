@@ -163,7 +163,6 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
     let cmdline_args = std::env::args_os();
     let args = env_args.chain(cmdline_args.skip(1));
     let options = parse_arguments(args)?;
-    println!("{:?}", options.print_filename);
 
     let appearance = AppearanceOptions {
         color_scheme: {
