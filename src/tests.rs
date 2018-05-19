@@ -1,7 +1,6 @@
 use super::*;
 use super::options::*;
 
-use std::path::PathBuf;
 use regex::Regex;
 
 use std::fmt::Write as FmtWrite;
@@ -30,7 +29,7 @@ fn default_options() -> Options {
         use_git_grep: false,
         breaks: false,
         ellipsis: false,
-        print_filename: false,
+        print_filename: PrintFilename::No,
         smart_branches: false,
         preprocessor: Preprocessor::Preserve,
         context_lines_before: 0,
@@ -89,7 +88,6 @@ fn test(options: &Options, pattern: &str, specification: &str) {
     }
 
     let regex = Regex::new(pattern).expect("invalid regexp");
-    let filepath = PathBuf::new();
     let mut result = std::io::Cursor::new(Vec::new());
     {
         let mut printer = Printer::new(
@@ -105,7 +103,7 @@ fn test(options: &Options, pattern: &str, specification: &str) {
                 print_filename: options.print_filename,
             });
         let mut input = std::io::BufReader::new(std::io::Cursor::new(input));
-        process_input(&mut input, &regex, &options, Some(&filepath), &mut printer).expect("i/o error");
+        process_input(&mut input, &regex, &options, None, &mut printer).expect("i/o error");
     }
 
     let mut result = result.into_inner();

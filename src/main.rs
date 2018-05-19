@@ -23,7 +23,8 @@ use std::io::Write as IoWrite;
 use itertools::Itertools;
 
 use error::OgrepError;
-use options::{InputSpec, ColorSchemeSpec, Options, UseColors, parse_arguments};
+use options::{InputSpec, ColorSchemeSpec, Options, UseColors, PrintFilename,
+              parse_arguments};
 use printer::{AppearanceOptions, ColorScheme, Printer};
 use io::{Input, Output};
 use context::{Context, Line, Action};
@@ -56,7 +57,7 @@ fn process_input(input: &mut BufRead,
 
     // Context as it is understood by usual 'grep' - fixed number of
     // lines before and after matched one.
-    let mut textual_context = TextualContext::new(&options);
+    let mut textual_context = TextualContext::new(&options, filepath);
 
     let mut contexts = [
         &mut textual_context as &mut Context,
@@ -79,7 +80,7 @@ fn process_input(input: &mut BufRead,
         }
 
         for mut context in &mut contexts {
-            match context.pre_line(&Line { text: line.clone(), number: line_number},
+            match context.pre_line(&Line { text: line.clone(), number: line_number },
                                    indentation, printer) {
                 Action::Skip => continue 'lines,
                 Action::Continue => (),
@@ -92,7 +93,7 @@ fn process_input(input: &mut BufRead,
                 // `match_found` is checked to avoid extra line break before first match.
                 if !match_found {
                     if let Some(ref path) = filepath {
-                        printer.print_filename(path)
+                        printer.print_heading_filename(path)
                     }
                 }
                 if was_empty_line && match_found {
@@ -114,10 +115,10 @@ fn process_input(input: &mut BufRead,
                         .enumerate();
 
                     for (_, line) in combined_context {
-                        printer.print_context(line.number, &line.text);
+                        printer.print_context(filepath, line.number, &line.text);
                     }
 
-                    printer.print_match(line_number, &line, matches);
+                    printer.print_match(filepath, line_number, &line, matches);
                 }
 
                 for mut context in &mut contexts {
@@ -162,6 +163,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
     let cmdline_args = std::env::args_os();
     let args = env_args.chain(cmdline_args.skip(1));
     let options = parse_arguments(args)?;
+    println!("{:?}", options.print_filename);
 
     let appearance = AppearanceOptions {
         color_scheme: {
@@ -197,7 +199,10 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
         },
         breaks: options.breaks,
         ellipsis: options.ellipsis,
-        print_filename: options.print_filename || options.use_git_grep,
+        print_filename: match options.print_filename {
+            PrintFilename::No if options.use_git_grep => PrintFilename::PerFile,
+            value => value
+        }
     };
 
     let mut output= if options.use_pager {

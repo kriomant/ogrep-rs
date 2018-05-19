@@ -22,6 +22,11 @@ arg_enum!{
     pub enum ColorSchemeSpec { Grey, Colored }
 }
 
+arg_enum!{
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    pub enum PrintFilename { No, PerFile, PerLine }
+}
+
 pub struct Options {
     pub pattern: String,
     pub input: InputSpec,
@@ -34,7 +39,7 @@ pub struct Options {
     pub use_git_grep: bool,
     pub breaks: bool,
     pub ellipsis: bool,
-    pub print_filename: bool,
+    pub print_filename: PrintFilename,
     pub smart_branches: bool,
     pub preprocessor: Preprocessor,
     pub context_lines_before: usize,
@@ -124,7 +129,18 @@ EXIT STATUS:
             .help("Print ellipsis when lines were skipped"))
         .arg(Arg::with_name("print-filename")
             .long("print-filename")
-            .help("Print filename on match"))
+            .takes_value(true)
+            .possible_values(&PrintFilename::variants())
+            .case_insensitive(true)
+            .help("When to print filename"))
+        .arg(Arg::with_name("print-filename-per-file")
+            .short("f")
+            .conflicts_with_all(&["print-filename", "F"])
+            .help("Print filename before first match in file, shortcut for --print-filename=per-file"))
+        .arg(Arg::with_name("print-filename-per-line")
+            .short("F")
+            .conflicts_with_all(&["print-filename", "f"])
+            .help("Print filename on each line, shortcut for --print-filename=per-line"))
         .arg(Arg::with_name("no-smart-branches")
             .long("no-smart-branches")
             .help("Don't handle if/if-else/else conditionals specially"))
@@ -172,7 +188,16 @@ EXIT STATUS:
         use_git_grep: matches.is_present("use-git-grep"),
         breaks: !matches.is_present("no-breaks"),
         ellipsis: matches.is_present("ellipsis"),
-        print_filename: matches.is_present("print-filename"),
+        print_filename:
+            if matches.is_present("print-filename") {
+                value_t!(matches, "print-filename", PrintFilename)?
+            } else if matches.is_present("print-filename-per-file") {
+                PrintFilename::PerFile
+            } else if matches.is_present("print-filename-per-line") {
+                PrintFilename::PerLine
+            } else {
+                PrintFilename::No
+            },
         smart_branches: !matches.is_present("no-smart-branches"),
         preprocessor: value_t!(matches, "preprocessor", Preprocessor)?,
         context_lines_before: before_context,
