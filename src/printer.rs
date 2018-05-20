@@ -119,12 +119,14 @@ impl<'o> Printer<'o> {
 
     pub fn print_heading_filename(&mut self, filename: &std::path::Path) {
         assert!(self.last_printed_lineno == 0);
-        self.output.write(b"\n").unwrap();
         if self.options.print_filename == PrintFilename::PerFile {
+            self.output.write(b"\n").unwrap();
             write!(&mut self.output, "{}", self.options.color_scheme.filename.0).unwrap();
             self.output.write(filename.as_os_str().as_bytes()).unwrap();
             write!(&mut self.output, "{}", self.options.color_scheme.filename.1).unwrap();
             self.output.write(b"\n\n").unwrap();
+        } else if self.options.breaks {
+            self.output.write(b"\n").unwrap();
         }
     }
 }
