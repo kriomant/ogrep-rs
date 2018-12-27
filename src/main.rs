@@ -235,7 +235,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
 
         let mut pattern: Cow<str> =
             if options.regex {
-                Cow::from(options.pattern.as_ref())
+                Cow::from(options.pattern.as_str())
             } else {
                 Cow::from(regex::escape(&options.pattern))
             };
