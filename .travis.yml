@@ -1,0 +1,29 @@
+language: rust
+rust:
+  - stable
+  - beta
+  - nightly
+os:
+  - linux
+  - osx
+matrix:
+  allow_failures:
+    - rust: nighly
+  fast_finish: true
+cache: cargo
+
+script:
+  - cargo build --release --verbose
+  - cargo test --release --verbose
+
+before_deploy:
+  - ln -s target/release/ogrep target/release/ogrep-$TRAVIS_OS_NAME
+deploy:
+  provider: releases
+  api_key:
+    secure: p2k43gPRcuQP43gayLvyf+6FOYGhZ7XVAQ/I2XKX5V/rLtcqjXd2fhig4BbDqvsxLBwHqf13LD/s04vJcpmiRSvb5nI1B/WryCcndGokpAy5DVSmfsPxe63OnZnZ/nM9Cnxdoz1772BO76SDPIB8aGte/0SSYHpgAOOm0vYHwSXqnWE7N3ka87FW/ZRJJvlH+DqTPJqFiBEfenyiLojRnjvxboTMAsLYniOlaQB1W+t+Xvvc2XO3AB0x9/zYCyDgtVUg3elkiJyYI4OMu8dlBtlZt9Dc142cwfiYUaziGWCC+rSaSR8s2VSq52G8GXsXXfVeo/Yv/3lYDiSR7Bk7FuN00umbLW7kodGFuW74ZndNTbcgsXL34Zr3wVsKL/RyFUEjZE7fmi7tfsJcq8yK2RhVxqbSdqoDiCt7iA7c9Rgk34JEQ5HJVRNsqD6gDjY+kAiAIYORIumYUqJmumSuQU8nuoaKGqX9gyHrTWcuiu7IiCe2AiR9jb+R1zphH7ww5LNEGMNhwdpDRAy7kBbUxrXgn1lSU61bmTvs1kDXJQiNl0cgyQ7c/i+hlTgPqDSQ/6b/7EpEVMYusZW1IFPBJRP1f1xGmsdsQ/INASLRd7a3dyLulNkD6CWPICy4dk1zlTEOp41J6/TbGWVZChU3SIaOQRDFr3O30JwVqiH8lLc=
+  file: target/release/ogrep-$TRAVIS_OS_NAME
+  on:
+    rust: stable
+    repo: kriomant/ogrep-rs
+    tags: true
