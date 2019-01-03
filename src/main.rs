@@ -31,6 +31,7 @@ use context::{Context, Line, Action};
 use contexts::indentation::IndentationContext;
 use contexts::preprocessor::PreprocessorContext;
 use contexts::textual::TextualContext;
+use contexts::children::ChildrenContext;
 
 const LESS_ARGS: &[&str] = &["--quit-if-one-screen", "--RAW-CONTROL-CHARS",
                              "--quit-on-intr", "--no-init"];
@@ -59,11 +60,18 @@ fn process_input(input: &mut BufRead,
     // lines before and after matched one.
     let mut textual_context = TextualContext::new(&options, filepath);
 
-    let mut contexts = [
+    // Children context prints all children of matched lines.
+    let mut children_context = ChildrenContext::new(&options, filepath);
+
+    let mut contexts = vec![
         &mut textual_context as &mut Context,
         &mut preprocessor_context,
         &mut indentation_context,
     ];
+
+    if options.children {
+        contexts.push(&mut children_context);
+    }
 
     // Whether at least one match was already found.
     let mut match_found = false;
@@ -278,7 +286,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
                     if bytes_count == 0 { break }
 
                     {
-                        let filepath = std::path::Path::new(line.trim_right_matches('\n'));
+                        let filepath = std::path::Path::new(line.trim_end_matches('\n'));
 
                         let mut file = std::fs::File::open(&filepath)?;
                         let mut input = std::io::BufReader::new(file);

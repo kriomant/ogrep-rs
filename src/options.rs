@@ -44,6 +44,7 @@ pub struct Options {
     pub preprocessor: Preprocessor,
     pub context_lines_before: usize,
     pub context_lines_after: usize,
+    pub children: bool,
 }
 
 pub fn parse_arguments<'i, Iter: Iterator<Item=OsString>>(args: Iter)
@@ -84,6 +85,9 @@ EXIT STATUS:
             .short("w")
             .long("word")
             .help("Search for whole words matching pattern"))
+        .arg(Arg::with_name("children")
+            .long("children")
+            .help("Show all lines with greater indentation (children) after matching line"))
         .arg(Arg::with_name("before_context")
             .short("B")
             .long("before-context")
@@ -186,7 +190,7 @@ EXIT STATUS:
         color_scheme: value_t!(matches, "color-scheme", ColorSchemeSpec)?,
         use_pager: !matches.is_present("no-pager"),
         use_git_grep: matches.is_present("use-git-grep"),
-        breaks: !matches.is_present("no-breaks"),
+        breaks: !matches.is_present("no-breaks") && !matches.is_present("children"),
         ellipsis: matches.is_present("ellipsis"),
         print_filename:
             if matches.is_present("print-filename") {
@@ -202,5 +206,6 @@ EXIT STATUS:
         preprocessor: value_t!(matches, "preprocessor", Preprocessor)?,
         context_lines_before: before_context,
         context_lines_after: after_context,
+        children: matches.is_present("children"),
     })
 }

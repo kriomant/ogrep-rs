@@ -34,6 +34,7 @@ fn default_options() -> Options {
         preprocessor: Preprocessor::Preserve,
         context_lines_before: 0,
         context_lines_after: 0,
+        children: false,
     }
 }
 
@@ -42,7 +43,7 @@ fn default_options() -> Options {
 /// `pattern` is fixed string to search for,
 /// `specification` should be written in special format which is used to
 /// prepare both input text and expected result. Each line must start with
-/// be one of:
+/// one of:
 ///   * line starting with ". " means that line must be ommitted from result,
 ///   * line starting with "o " means that line must be printed,
 ///   * "~ …" means that ellipsis should be printed
@@ -63,7 +64,8 @@ fn test(options: &Options, pattern: &str, specification: &str) {
 
     let mut line_number = 0usize;
     for line in specification.lines() {
-        let line = line.trim_left();
+        let line = line.trim_start();
+
         if line.is_empty() { continue }
         let (to_input, to_expected) = match line {
             l if l.starts_with(".") => (Some(rest_of_line(line)), None),
@@ -325,4 +327,46 @@ fn test_breaks_incorrect() {
           o   fux
           .
           o     bla");
+}
+
+/// Tests printing all children of matched line.
+#[test]
+fn test_children() {
+    test(&Options { children: true, ..default_options() },
+         "foo",
+
+         "o foo
+          o   bar
+          o     baz");
+}
+
+/// Tests printing all children of matched line when there is
+/// another match inside children.
+#[test]
+fn test_nested_children() {
+    test(&Options { children: true, ..default_options() },
+         "foo",
+
+         "o foo
+          o   bar
+          o     foo
+          o   baz");
+}
+
+/// Tests printing breaks together with children context.
+/// It doesn't work right now and current workaround is to disable breaks
+/// when children option is used.
+// #[test]
+#[allow(dead_code)]
+fn test_children_breaks() {
+    test(&Options { breaks: true, children: true, ..default_options() },
+         "foo",
+
+         "o foo
+          o   bar
+          o
+          o   baz
+          ~
+          o foo
+          o   bar");
 }
