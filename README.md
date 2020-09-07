@@ -53,7 +53,7 @@ It is even better, because `ogrep` can use colors, here is a picture:
 Install [Rust and Cargo](https://www.rust-lang.org/install.html), if you haven't yet, then
 
 ```sh
-cargo install ogrep-rs
+cargo install ogrep
 ```
 
 ### MacOS
