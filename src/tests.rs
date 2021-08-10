@@ -19,7 +19,7 @@ use std::fmt::Write as FmtWrite;
 fn default_options() -> Options {
     Options {
         pattern: String::new(),
-        input: InputSpec::Stdin,
+        input: Some(InputSpec::Stdin),
         regex: false,
         case_insensitive: false,
         whole_word: false,

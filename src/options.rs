@@ -1,4 +1,4 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::PathBuf;
 use clap;
 
@@ -29,7 +29,7 @@ arg_enum!{
 
 pub struct Options {
     pub pattern: String,
-    pub input: InputSpec,
+    pub input: Option<InputSpec>,
     pub regex: bool,
     pub case_insensitive: bool,
     pub whole_word: bool,
@@ -48,7 +48,7 @@ pub struct Options {
 }
 
 pub fn parse_arguments<'i, Iter: Iterator<Item=OsString>>(args: Iter)
-        -> Result<Options, clap::Error> {
+        -> Result<(Option<InputSpec>, Options), clap::Error> {
     use clap::{App, Arg};
 
     let colors_default = UseColors::Auto.to_string();
@@ -178,12 +178,16 @@ EXIT STATUS:
             (before, after)
         };
 
-    Ok(Options {
+    let input = matches.value_of_os("input").map(|input| match input {
+        path if path == "-" => InputSpec::Stdin,
+        path => InputSpec::File(PathBuf::from(path)),
+    });
+    let options = Options {
         pattern: matches.value_of("pattern").expect("pattern").to_string(),
-        input: match matches.value_of_os("input").unwrap_or(OsStr::new("-")) {
+        input: matches.value_of_os("input").map(|input| match input {
           path if path == "-" => InputSpec::Stdin,
           path => InputSpec::File(PathBuf::from(path)),
-        },
+        }),
         regex: matches.is_present("regex"),
         case_insensitive: matches.is_present("case-insensitive"),
         whole_word: matches.is_present("whole-word"),
@@ -208,5 +212,6 @@ EXIT STATUS:
         context_lines_before: before_context,
         context_lines_after: after_context,
         children: matches.is_present("children"),
-    })
+    };
+    Ok((input, options))
 }

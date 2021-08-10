@@ -16,6 +16,7 @@ mod util;
 
 use std::ffi::{OsStr, OsString};
 use std::borrow::Cow;
+use std::path::Path;
 use regex::{Regex, RegexBuilder};
 
 use std::io::BufRead;
@@ -170,7 +171,7 @@ fn real_main() -> std::result::Result<i32, Box<dyn std::error::Error>> {
         .map(|b| OsString::from(b));
     let cmdline_args = std::env::args_os();
     let args = env_args.chain(cmdline_args.skip(1));
-    let options = parse_arguments(args)?;
+    let (input_spec, options) = parse_arguments(args)?;
 
     let appearance = AppearanceOptions {
         color_scheme: {
@@ -255,9 +256,12 @@ fn real_main() -> std::result::Result<i32, Box<dyn std::error::Error>> {
         let re = RegexBuilder::new(&pattern).case_insensitive(options.case_insensitive).build()?;
 
         if options.use_git_grep {
-            let pathspec = match options.input {
-                InputSpec::File(ref path) => path,
-                InputSpec::Stdin => return Err(Box::new(OgrepError::GitGrepWithStdinInput)),
+            // '-' is not valid input specification when git grep mode is used,
+            // if no path is given, search in current directory.
+            let pathspec = match input_spec {
+                None => Path::new("."),
+                Some(InputSpec::File(ref path)) => path.as_ref(),
+                Some(InputSpec::Stdin) => return Err(Box::new(OgrepError::GitGrepWithStdinInput)),
             };
             let mut git_grep_args = vec![OsStr::new("grep"), OsStr::new("--files-with-matches")];
             if options.case_insensitive {
@@ -305,9 +309,11 @@ fn real_main() -> std::result::Result<i32, Box<dyn std::error::Error>> {
             }
 
         } else {
-            let mut input = Input::open(&options.input)?;
+            // Read from stdin if no input specification is given.
+            let input_spec = input_spec.unwrap_or(InputSpec::Stdin);
+            let mut input = Input::open(&input_spec)?;
             let mut input_lock = input.lock();
-            let filename: Option<&std::path::Path> = match options.input {
+            let filename: Option<&std::path::Path> = match input_spec {
                 InputSpec::File(ref path) => Some(path),
                 InputSpec::Stdin => None,
             };
