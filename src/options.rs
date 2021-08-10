@@ -86,6 +86,7 @@ EXIT STATUS:
             .long("word")
             .help("Search for whole words matching pattern"))
         .arg(Arg::with_name("children")
+            .short("c")
             .long("children")
             .help("Show all lines with greater indentation (children) after matching line"))
         .arg(Arg::with_name("before_context")
