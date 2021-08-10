@@ -21,14 +21,14 @@ pub struct AppearanceOptions {
 }
 
 pub struct Printer<'o> {
-	pub output: &'o mut std::io::Write,
+	pub output: &'o mut dyn std::io::Write,
     pub options: AppearanceOptions,
     last_printed_lineno: usize,
     was_break: bool,
 }
 
 impl<'o> Printer<'o> {
-    pub fn new(output: &'o mut std::io::Write, options: AppearanceOptions) -> Self {
+    pub fn new(output: &'o mut dyn std::io::Write, options: AppearanceOptions) -> Self {
         Printer {
             output: output,
             options: options,

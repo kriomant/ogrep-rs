@@ -22,7 +22,7 @@ pub trait Context {
     fn post_line(&mut self, line: &Line, indentation: Option<usize>);
 
     /// Returns current context lines.
-    fn dump<'a>(&'a mut self) -> Box<Iterator<Item=&'a Line> + 'a>;
+    fn dump<'a>(&'a mut self) -> Box<dyn Iterator<Item=&'a Line> + 'a>;
 
     /// Clears context. Called after `dump`.
     fn clear(&mut self);

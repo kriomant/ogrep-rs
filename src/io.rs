@@ -29,7 +29,7 @@ impl Input {
     }
 }
 impl<'a> InputLock<'a> {
-    pub fn as_buf_read(&mut self) -> &mut std::io::BufRead {
+    pub fn as_buf_read(&mut self) -> &mut dyn std::io::BufRead {
         match self {
             &mut InputLock::File(ref mut reader) => reader,
             &mut InputLock::Stdin(ref mut lock) => lock,
@@ -53,11 +53,11 @@ impl Output {
         }
     }
 
-    pub fn close(mut self) -> Result<(), Box<std::error::Error>> {
+    pub fn close(mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.close_impl()
     }
 
-    pub fn close_impl(&mut self) -> Result<(), Box<std::error::Error>> {
+    pub fn close_impl(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             &mut Output::Pager(ref mut process) => { process.wait()?; Ok(()) },
             &mut Output::Stdout(_) => Ok(()),
@@ -70,7 +70,7 @@ impl Drop for Output {
     }
 }
 impl<'a> OutputLock<'a> {
-    pub fn as_write(&mut self) -> &mut std::io::Write {
+    pub fn as_write(&mut self) -> &mut dyn std::io::Write {
         match self {
             &mut OutputLock::Pager(ref mut stdin) => stdin,
             &mut OutputLock::Stdout(ref mut lock) => lock,

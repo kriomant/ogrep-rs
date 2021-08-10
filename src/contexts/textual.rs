@@ -50,7 +50,7 @@ impl<'p, 'o> Context for TextualContext<'p, 'o> {
         if self.trailing_lines_left > 0 { self.trailing_lines_left -= 1; }
     }
 
-    fn dump<'a>(&'a mut self) -> Box<Iterator<Item=&'a Line> + 'a> {
+    fn dump<'a>(&'a mut self) -> Box<dyn Iterator<Item=&'a Line> + 'a> {
         Box::new(self.context.iter().map(|e| &e.line))
     }
 

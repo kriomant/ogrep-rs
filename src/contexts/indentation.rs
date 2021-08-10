@@ -66,7 +66,7 @@ impl<'o> Context for IndentationContext<'o> {
     }
 
     /// Returns current context lines.
-    fn dump<'a>(&'a mut self) -> Box<Iterator<Item=&'a Line> + 'a> {
+    fn dump<'a>(&'a mut self) -> Box<dyn Iterator<Item=&'a Line> + 'a> {
         Box::new(self.context.iter().map(|e| &e.line))
     }
 

@@ -80,7 +80,7 @@ impl<'o> Context for PreprocessorContext<'o> {
     fn post_line(&mut self, _line: &Line, _indentation: Option<usize>) {}
 
     /// Returns current context lines.
-    fn dump<'a>(&'a mut self) -> Box<Iterator<Item=&'a Line> + 'a> {
+    fn dump<'a>(&'a mut self) -> Box<dyn Iterator<Item=&'a Line> + 'a> {
         Box::new(self.context.iter().map(|e| &e.line))
     }
 

@@ -43,7 +43,7 @@ impl<'p> Context for ChildrenContext<'p> {
         }
     }
 
-    fn dump<'a>(&'a mut self) -> Box<Iterator<Item=&'a Line> + 'a> {
+    fn dump<'a>(&'a mut self) -> Box<dyn Iterator<Item=&'a Line> + 'a> {
         Box::new(self.context.iter())
     }
 

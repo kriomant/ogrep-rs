@@ -73,7 +73,7 @@ fn test(options: &Options, pattern: &str, specification: &str) {
                                         Some((rest_of_line(line), true))),
             "~ …" => (None, Some(("   …", false))),
             "~" => (None, Some(("", false))),
-            _ => panic!(format!("unexpected specification line: {}", line)),
+            _ => panic!("unexpected specification line: {}", line),
         };
 
         if let Some(to_input) = to_input {

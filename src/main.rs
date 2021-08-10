@@ -40,7 +40,7 @@ fn calculate_indentation(s: &str) -> Option<usize> {
     s.find(|c: char| !c.is_whitespace())
 }
 
-fn process_input(input: &mut BufRead,
+fn process_input(input: &mut dyn BufRead,
                  pattern: &Regex,
                  options: &Options,
                  filepath: Option<&std::path::Path>,
@@ -64,7 +64,7 @@ fn process_input(input: &mut BufRead,
     let mut children_context = ChildrenContext::new(&options, filepath);
 
     let mut contexts = vec![
-        &mut textual_context as &mut Context,
+        &mut textual_context as &mut dyn Context,
         &mut preprocessor_context,
         &mut indentation_context,
     ];
@@ -87,7 +87,7 @@ fn process_input(input: &mut BufRead,
             was_empty_line = true;
         }
 
-        for mut context in &mut contexts {
+        for context in &mut contexts {
             match context.pre_line(&Line { text: line.clone(), number: line_number },
                                    indentation, printer) {
                 Action::Skip => continue 'lines,
@@ -129,7 +129,7 @@ fn process_input(input: &mut BufRead,
                     printer.print_match(filepath, line_number, &line, matches);
                 }
 
-                for mut context in &mut contexts {
+                for context in &mut contexts {
                     context.clear();
                 }
                 was_empty_line = false;
@@ -142,21 +142,21 @@ fn process_input(input: &mut BufRead,
         };
 
         if !matched {
-            for mut context in &mut contexts {
+            for context in &mut contexts {
                 context.post_line(&Line { number: line_number, text: line.clone() },
                                   indentation);
             }
         }
     }
 
-    for mut context in &mut contexts {
+    for context in &mut contexts {
         context.end(printer);
     }
 
     Ok(match_found)
 }
 
-fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
+fn real_main() -> std::result::Result<i32, Box<dyn std::error::Error>> {
     // Read default options from OGREP_OPTIONS environment variable.
     let env_var = std::env::var("OGREP_OPTIONS");
     let env_var_ref = match env_var {
@@ -288,7 +288,7 @@ fn real_main() -> std::result::Result<i32, Box<std::error::Error>> {
                     {
                         let filepath = std::path::Path::new(line.trim_end_matches('\n'));
 
-                        let mut file = std::fs::File::open(&filepath)?;
+                        let file = std::fs::File::open(&filepath)?;
                         let mut input = std::io::BufReader::new(file);
 
                         printer.reset();
