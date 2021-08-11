@@ -10,6 +10,8 @@ struct Entry {
     print_on_discard: bool,
 }
 
+/// Maintains textual context — several lines before and after
+/// matched line.
 pub struct TextualContext<'p, 'o> {
     filepath: Option<&'p Path>,
     options: &'o Options,

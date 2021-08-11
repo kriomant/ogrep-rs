@@ -17,8 +17,31 @@ struct ContextEntry {
     indentation: usize,
 }
 
+/// Indentation context — the heart of ogrep.
 pub struct IndentationContext<'o> {
     options: &'o Options,
+
+    /// Indentation context: last-processed line and it's parents (in terms of indentaion).
+    ///
+    /// ```text
+    /// a      ← context[0], indentation=0
+    ///   b
+    ///     c
+    ///   d    ← context[1], indentation=1
+    ///     e  ← context[2], indentation=2
+    /// ```
+    ///
+    /// Invariant: lines in context are sorted by indentation (ascending).
+    /// Formal:
+    /// ```ignore
+    /// context.iter().tuple_windows().all(|(a,b)| {
+    ///     if options.smart_branches {
+    ///         a.indentation <= b.indentation
+    ///     } else {
+    ///         a.indentation < b.indentation
+    ///     }
+    /// })
+    /// ```
     context: Vec<ContextEntry>,
 }
 impl<'o> IndentationContext<'o> {
@@ -34,16 +57,32 @@ impl<'o> Context for IndentationContext<'o> {
     fn pre_line(&mut self, line: &Line, indentation: Option<usize>, _printer: &mut Printer) -> Action {
         let indentation = match indentation {
             Some(i) => i,
+            // Empty lines shouldn't reset indentation, skip them
             None => return Action::Continue,
         };
 
+        // Drop lines with indentation less than current line's one.
+        //     a      ↑
+        //       b    | context ← drop this line
+        //         c  ↓         ← and this
+        //     ------
+        //       d              ← current line
+        //
+        // `top` is an index of last context line to leave, or None
+        // if whole context must be dropped.
         let top = self.context.iter().rposition(|e: &ContextEntry| {
             // Upper scopes are always preserved.
             if e.indentation < indentation { return true; }
             if e.indentation > indentation { return false; }
 
+            // Indentation is the same as of current line, push it out
+            // when `smart_branches` option is off.
             if !self.options.smart_branches { return false; }
 
+            // When `smart_branches` option is on, things are little harder.
+            // We still pushes lines with greater or equal indentation out of
+            // context, but we want to leave e.g. line with 'if' corresponding to
+            // 'else' in current line.
             let stripped_line = &line.text[indentation..];
             let stripped_context_line = &e.line.text[e.indentation..];
             for &(prefix, context_prefixes) in SMART_BRANCH_PREFIXES {
@@ -52,8 +91,11 @@ impl<'o> Context for IndentationContext<'o> {
                 }
             }
 
+            // Current line is not part of branch statement, push it out.
             return false;
         });
+
+        // Drop all context lines after one with `top` index.
         self.context.truncate(top.map(|t| t+1).unwrap_or(0));
 
         Action::Continue
@@ -61,6 +103,11 @@ impl<'o> Context for IndentationContext<'o> {
 
     fn post_line(&mut self, line: &Line, indentation: Option<usize>) {
         if let Some(indentation) = indentation {
+            // We already pushed out all lines with greater or equal indentation
+            // out of context in `pre_line`, …
+            assert!(self.context.last().map(|last| last.indentation < indentation).unwrap_or(true));
+
+            // … so just put new line into context.
             self.context.push(ContextEntry { line: line.clone(), indentation });
         }
     }
