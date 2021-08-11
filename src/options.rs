@@ -155,7 +155,13 @@ EXIT STATUS:
             .default_value(&preprocessor_default)
             .possible_values(&Preprocessor::variants())
             .case_insensitive(true)
-            .help("How to handle C preprocessor instructions"))
+            .help("How to handle C preprocessor instructions
+• context: maintain and print separate context of preprocessor instructions
+• ignore: totally ignore preprocessor instructions
+• preserve: don't try to detect preprocessor instructions and treat them as any other lines
+"
+            )
+            .hide_possible_values(true))
         .get_matches_from(args);
 
     let (before_context, after_context) =
