@@ -105,7 +105,15 @@ impl<'o> Context for IndentationContext<'o> {
         if let Some(indentation) = indentation {
             // We already pushed out all lines with greater or equal indentation
             // out of context in `pre_line`, …
-            assert!(self.context.last().map(|last| last.indentation < indentation).unwrap_or(true));
+            assert!(match self.context.last() {
+                Some(last) =>
+                    if self.options.smart_branches {
+                        last.indentation <= indentation
+                    } else {
+                        last.indentation < indentation
+                    }
+                None => true
+            });
 
             // … so just put new line into context.
             self.context.push(ContextEntry { line: line.clone(), indentation });
