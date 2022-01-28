@@ -244,6 +244,19 @@ fn test_preprocessor_context() {
           . #endif");
 }
 
+/// Tests that matched preprocessor lines are printed.
+#[test]
+fn test_matched_preprocessor_lines_are_printed() {
+    test(&Options { preprocessor: Preprocessor::Context, ..default_options() },
+         "bla",
+
+         ". foo
+          o #if defined(bla)
+          .   bar
+          .     baz
+          . #endif");
+}
+
 /// Tests 'context' mode of handling preprocessor instructions,
 /// they must form parallel context.
 #[test]

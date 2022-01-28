@@ -80,7 +80,7 @@ fn process_input(input: &mut dyn BufRead,
     // Whether empty line was met since last match.
     let mut was_empty_line = false;
 
-    'lines: for (line_number, line) in input.lines().enumerate().map(|(n, l)| (n+1, l)) {
+    for (line_number, line) in input.lines().enumerate().map(|(n, l)| (n+1, l)) {
         let line = line?;
 
         let indentation = calculate_indentation(&line);
@@ -88,13 +88,19 @@ fn process_input(input: &mut dyn BufRead,
             was_empty_line = true;
         }
 
-        for context in &mut contexts {
+        // Number of contexts queried before one of them returned Skip (including that one).
+        // Only those contexts must then be used for dumping/adjusting/clearing during handling
+        // current line.
+        let mut n = 0;
+        for context in contexts.iter_mut() {
+            n += 1;
             match context.pre_line(&Line { text: line.clone(), number: line_number },
                                    indentation, printer) {
-                Action::Skip => continue 'lines,
+                Action::Skip => break,
                 Action::Continue => (),
             }
         }
+        let contexts = &mut contexts[..n];
 
         let matched = {
             let mut matches = pattern.find_iter(&line).peekable();
@@ -130,7 +136,7 @@ fn process_input(input: &mut dyn BufRead,
                     printer.print_match(filepath, line_number, &line, matches);
                 }
 
-                for context in &mut contexts {
+                for context in contexts.iter_mut() {
                     context.clear();
                 }
                 was_empty_line = false;
@@ -143,7 +149,7 @@ fn process_input(input: &mut dyn BufRead,
         };
 
         if !matched {
-            for context in &mut contexts {
+            for context in contexts {
                 context.post_line(&Line { number: line_number, text: line.clone() },
                                   indentation);
             }

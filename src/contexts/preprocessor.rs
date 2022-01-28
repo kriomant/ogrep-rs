@@ -66,11 +66,9 @@ impl<'o> Context for PreprocessorContext<'o> {
                     None => Action::Continue,
                     Some(PreprocessorKind::If) => {
                         self.level += 1;
-                        self.context.push(Entry { line: line.clone(), level: self.level });
                         Action::Skip
                     },
                     Some(PreprocessorKind::Else) => {
-                        self.context.push(Entry { line: line.clone(), level: self.level });
                         Action::Skip
                     },
                     Some(PreprocessorKind::Endif) => {
@@ -86,7 +84,31 @@ impl<'o> Context for PreprocessorContext<'o> {
         }
     }
 
-    fn post_line(&mut self, _line: &Line, _indentation: Option<usize>) {}
+    fn post_line(&mut self, line: &Line, indentation: Option<usize>) {
+        let indentation = match indentation {
+            Some(i) => i,
+            None => return,
+        };
+
+        // Ignore lines looking like C preprocessor instruction, because they
+        // are often written without indentation and this breaks context.
+        match self.options.preprocessor {
+            Preprocessor::Preserve => (),
+            Preprocessor::Ignore => (),
+            Preprocessor::Context =>
+                match self.preprocessor_instruction_kind(&line.text[indentation..]) {
+                    None => (),
+                    Some(PreprocessorKind::If) => {
+                        self.context.push(Entry { line: line.clone(), level: self.level });
+                    },
+                    Some(PreprocessorKind::Else) => {
+                        self.context.push(Entry { line: line.clone(), level: self.level });
+                    },
+                    Some(PreprocessorKind::Endif) => (),
+                    Some(PreprocessorKind::Other) => (),
+                }
+        }
+    }
 
     /// Returns current context lines.
     fn dump<'a>(&'a mut self) -> Box<dyn Iterator<Item=&'a Line> + 'a> {
