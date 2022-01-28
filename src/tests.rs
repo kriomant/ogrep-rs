@@ -244,6 +244,23 @@ fn test_preprocessor_context() {
           . #endif");
 }
 
+/// Tests 'context' mode of handling preprocessor instructions,
+/// they must form parallel context.
+#[test]
+fn test_jinja_preprocessor() {
+    test(&Options { preprocessor: Preprocessor::Context, ..default_options() },
+         "bla",
+
+         "o foo
+          o {% if defined(yup) %}
+          .   bar
+          .     baz
+          o {%- else %}
+          o   qux
+          o     bla
+          . {% endif %}");
+}
+
 /// Tests printing textual context.
 #[test]
 fn test_context_before() {

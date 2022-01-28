@@ -1,7 +1,7 @@
 use context::{Context, Line, Action};
-use util::starts_with_word;
 use options::{Options, Preprocessor};
 use printer::Printer;
+use regex::Regex;
 
 struct Entry {
     line: Line,
@@ -9,20 +9,16 @@ struct Entry {
 }
 
 enum PreprocessorKind { If, Else, Endif, Other }
-fn preprocessor_instruction_kind(s: &str) -> Option<PreprocessorKind> {
-    match s {
-        _ if starts_with_word(s, "#if") => Some(PreprocessorKind::If),
-        _ if starts_with_word(s, "#else") => Some(PreprocessorKind::Else),
-        _ if starts_with_word(s, "#endif") => Some(PreprocessorKind::Endif),
-        _ if starts_with_word(s, "#") => Some(PreprocessorKind::Other),
-        _ => None,
-    }
-}
 
 pub struct PreprocessorContext<'o> {
     options: &'o Options,
     level: usize,
     context: Vec<Entry>,
+
+    if_regex: Regex,
+    else_regex: Regex,
+    endif_regex: Regex,
+    other_regex: Regex,
 }
 impl<'o> PreprocessorContext<'o> {
     pub fn new(options: &'o Options) -> Self {
@@ -30,7 +26,20 @@ impl<'o> PreprocessorContext<'o> {
             options: options,
             level: 0usize,
             context: Vec::new(),
+
+            if_regex: Regex::new(r"^\s*(?:#|\{%-?)\s*if\b").unwrap(),
+            else_regex: Regex::new(r"^\s*(?:#|\{%-?)\s*else\b").unwrap(),
+            endif_regex: Regex::new(r"^\s*(?:#|\{%-?)\s*endif\b").unwrap(),
+            other_regex: Regex::new(r"^\s*(?:#|\{%-?)").unwrap(),
         }
+    }
+
+    fn preprocessor_instruction_kind(&self, s: &str) -> Option<PreprocessorKind> {
+        if self.if_regex.is_match(s) { return Some(PreprocessorKind::If) }
+        if self.else_regex.is_match(s) { return Some(PreprocessorKind::Else) }
+        if self.endif_regex.is_match(s) { return Some(PreprocessorKind::Endif) }
+        if self.other_regex.is_match(s) { return Some(PreprocessorKind::Other) }
+        return None;
     }
 }
 
@@ -47,13 +56,13 @@ impl<'o> Context for PreprocessorContext<'o> {
         match self.options.preprocessor {
             Preprocessor::Preserve => Action::Continue, // Do nothing, handle line as usual
             Preprocessor::Ignore =>
-                if preprocessor_instruction_kind(&line.text[indentation..]).is_some() {
+                if self.preprocessor_instruction_kind(&line.text[indentation..]).is_some() {
                     Action::Skip
                 } else {
                     Action::Continue
                 },
             Preprocessor::Context =>
-                match preprocessor_instruction_kind(&line.text[indentation..]) {
+                match self.preprocessor_instruction_kind(&line.text[indentation..]) {
                     None => Action::Continue,
                     Some(PreprocessorKind::If) => {
                         self.level += 1;
