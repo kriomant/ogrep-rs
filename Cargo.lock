@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "ogrep"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "difference",
