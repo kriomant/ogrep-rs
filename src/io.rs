@@ -1,41 +1,4 @@
 use std;
-use std::fs::File;
-use std::io::BufReader;
-use options::InputSpec;
-
-pub enum Input {
-    File(BufReader<File>),
-    Stdin(std::io::Stdin),
-}
-pub enum InputLock<'a> {
-    File(&'a mut std::io::BufReader<std::fs::File>),
-    Stdin(std::io::StdinLock<'a>),
-}
-impl Input {
-    pub fn open(spec: &InputSpec) -> std::io::Result<Self> {
-        match *spec {
-            InputSpec::File(ref path) => {
-                let file = File::open(path)?;
-                Ok(Input::File(BufReader::new(file)))
-            },
-            InputSpec::Stdin => Ok(Input::Stdin(std::io::stdin())),
-        }
-    }
-    pub fn lock(&mut self) -> InputLock {
-        match *self {
-            Input::File(ref mut file) => InputLock::File(file),
-            Input::Stdin(ref mut stdin) => InputLock::Stdin(stdin.lock()),
-        }
-    }
-}
-impl<'a> InputLock<'a> {
-    pub fn as_buf_read(&mut self) -> &mut dyn std::io::BufRead {
-        match self {
-            &mut InputLock::File(ref mut reader) => reader,
-            &mut InputLock::Stdin(ref mut lock) => lock,
-        }
-    }
-}
 
 pub enum Output {
     Pager(std::process::Child),

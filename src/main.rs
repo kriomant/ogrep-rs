@@ -16,7 +16,6 @@ mod util;
 
 use std::ffi::{OsStr, OsString};
 use std::borrow::Cow;
-use std::path::Path;
 use regex::{Regex, RegexBuilder};
 
 use std::io::BufRead;
@@ -24,10 +23,9 @@ use std::io::Write as IoWrite;
 use itertools::Itertools;
 
 use error::OgrepError;
-use options::{InputSpec, ColorSchemeSpec, Options, UseColors, PrintFilename,
-              parse_arguments};
+use options::{InputSpec, ColorSchemeSpec, Options, UseColors, parse_arguments};
 use printer::{AppearanceOptions, ColorScheme, Printer};
-use io::{Input, Output};
+use io::Output;
 use context::{Context, Line, Action};
 use contexts::indentation::IndentationContext;
 use contexts::preprocessor::PreprocessorContext;
@@ -213,13 +211,10 @@ fn real_main() -> std::result::Result<i32, Box<dyn std::error::Error>> {
         },
         breaks: options.breaks,
         ellipsis: options.ellipsis,
-        print_filename: match options.print_filename {
-            PrintFilename::No if options.use_git_grep => PrintFilename::PerFile,
-            value => value
-        }
+        print_filename: options.print_filename,
     };
 
-    let mut output= if options.use_pager {
+    let mut output = if options.use_pager {
         let pager_process = match std::env::var_os("PAGER") {
             Some(pager_cmdline) => {
                 // User configured custom pager via environment variable.
@@ -261,70 +256,72 @@ fn real_main() -> std::result::Result<i32, Box<dyn std::error::Error>> {
         }
         let re = RegexBuilder::new(&pattern).case_insensitive(options.case_insensitive).build()?;
 
-        if options.use_git_grep {
-            // '-' is not valid input specification when git grep mode is used,
-            // if no path is given, search in current directory.
-            let pathspec = match input_spec {
-                None => Path::new("."),
-                Some(InputSpec::File(ref path)) => path.as_ref(),
-                Some(InputSpec::Stdin) => return Err(Box::new(OgrepError::GitGrepWithStdinInput)),
-            };
-            let mut git_grep_args = vec![OsStr::new("grep"), OsStr::new("--files-with-matches")];
-            if options.case_insensitive {
-                git_grep_args.push(OsStr::new("--ignore-case"))
-            }
-            if !options.regex {
-                git_grep_args.push(OsStr::new("--fixed-strings"))
-            }
-            if options.whole_word {
-                git_grep_args.push(OsStr::new("--word-regexp"))
-            }
-            git_grep_args.push(OsStr::new("-e"));
-            git_grep_args.push(OsStr::new(&options.pattern));
-            git_grep_args.push(OsStr::new("--"));
-            git_grep_args.push(pathspec.as_os_str());
-            let mut git_grep_process = std::process::Command::new("git")
-                .args(&git_grep_args)
-                .stdout(std::process::Stdio::piped())
-                .spawn()?;
-
-            {
-                let out = git_grep_process.stdout.as_mut().unwrap();
-                let mut reader = std::io::BufReader::new(out);
-                let mut line = String::new();
-                while let Ok(bytes_count) = reader.read_line(&mut line) {
-                    if bytes_count == 0 { break }
-
-                    {
-                        let filepath = std::path::Path::new(line.trim_end_matches('\n'));
-
-                        let file = std::fs::File::open(&filepath)?;
-                        let mut input = std::io::BufReader::new(file);
-
-                        printer.reset();
-                        match_found |= process_input(&mut input, &re, &options, Some(filepath), &mut printer)?;
-                    }
-
-                    line.clear();
+        match input_spec {
+            InputSpec::GitGrep(args) => {
+                let mut git_grep_args = vec![OsStr::new("grep"), OsStr::new("--files-with-matches")];
+                if options.case_insensitive {
+                    git_grep_args.push(OsStr::new("--ignore-case"))
                 }
-            };
+                if !options.regex {
+                    git_grep_args.push(OsStr::new("--fixed-strings"))
+                }
+                if options.whole_word {
+                    git_grep_args.push(OsStr::new("--word-regexp"))
+                }
+                git_grep_args.push(OsStr::new("-e"));
+                git_grep_args.push(OsStr::new(&options.pattern));
+                git_grep_args.push(OsStr::new("--"));
+                git_grep_args.extend(args.iter().map(|a| a.as_os_str()));
+                let mut git_grep_process = std::process::Command::new("git")
+                    .args(&git_grep_args)
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()?;
 
-            match git_grep_process.wait()?.code() {
-                Some(0) | Some(1) => (),
-                _ => return Err(Box::new(OgrepError::GitGrepFailed)),
+                {
+                    let out = git_grep_process.stdout.as_mut().unwrap();
+                    let mut reader = std::io::BufReader::new(out);
+                    let mut line = String::new();
+                    while let Ok(bytes_count) = reader.read_line(&mut line) {
+                        if bytes_count == 0 { break }
+
+                        {
+                            let filepath = std::path::Path::new(line.trim_end_matches('\n'));
+
+                            let file = std::fs::File::open(&filepath)?;
+                            let mut input = std::io::BufReader::new(file);
+
+                            printer.reset();
+                            match_found |= process_input(&mut input, &re, &options, Some(filepath), &mut printer)?;
+                        }
+
+                        line.clear();
+                    }
+                };
+
+                match git_grep_process.wait()?.code() {
+                    Some(0) | Some(1) => (),
+                    _ => return Err(Box::new(OgrepError::GitGrepFailed)),
+                }
             }
 
-        } else {
-            // Read from stdin if no input specification is given.
-            let input_spec = input_spec.unwrap_or(InputSpec::Stdin);
-            let mut input = Input::open(&input_spec)?;
-            let mut input_lock = input.lock();
-            let filename: Option<&std::path::Path> = match input_spec {
-                InputSpec::File(ref path) => Some(path),
-                InputSpec::Stdin => None,
-            };
-            match_found = process_input(input_lock.as_buf_read(), &re, &options, filename, &mut printer)?
-        };
+            InputSpec::Stdin => {
+                // Read from stdin if no input specification is given.
+                let stdio = std::io::stdin();
+                let mut stdio_locked = stdio.lock();
+                let filename = None;
+                match_found = process_input(&mut stdio_locked, &re, &options, filename, &mut printer)?
+            }
+
+            InputSpec::Files(files) => {
+                for path in files {
+                    let file = std::fs::File::open(&path)?;
+                    let mut reader = std::io::BufReader::new(&file);
+
+                    printer.reset();
+                    match_found |= process_input(&mut reader, &re, &options, Some(&path), &mut printer)?
+                }
+            }
+        }
     }
 
     output.close()?;

@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use clap;
 
 pub enum InputSpec {
-    File(PathBuf),
     Stdin,
+    Files(Vec<PathBuf>),
+    GitGrep(Vec<OsString>),
 }
 
 arg_enum!{
@@ -29,7 +30,6 @@ arg_enum!{
 
 pub struct Options {
     pub pattern: String,
-    pub input: Option<InputSpec>,
     pub regex: bool,
     pub case_insensitive: bool,
     pub whole_word: bool,
@@ -48,7 +48,7 @@ pub struct Options {
 }
 
 pub fn parse_arguments<'i, Iter: Iterator<Item=OsString>>(args: Iter)
-        -> Result<(Option<InputSpec>, Options), clap::Error> {
+        -> Result<(InputSpec, Options), clap::Error> {
     use clap::{App, Arg};
 
     let colors_default = UseColors::Auto.to_string();
@@ -72,7 +72,8 @@ EXIT STATUS:
             .help("Pattern to search for")
             .required(true))
         .arg(Arg::with_name("input")
-            .help("File to search in"))
+            .multiple(true)
+            .help("Files to search in, omit to search in stdin"))
         .arg(Arg::with_name("regex")
             .short("e")
             .long("regex")
@@ -184,16 +185,25 @@ EXIT STATUS:
             (before, after)
         };
 
-    let input = matches.value_of_os("input").map(|input| match input {
-        path if path == "-" => InputSpec::Stdin,
-        path => InputSpec::File(PathBuf::from(path)),
-    });
+    let inputs = matches.values_of_os("input").unwrap_or_default().map(OsString::from).collect();
+    let input = if matches.is_present("use-git-grep") {
+        // All inputs are just parameters for 'git grep'
+        InputSpec::GitGrep(inputs)
+    } else {
+        if inputs.is_empty() || (inputs.len() == 1 && inputs[0] == "-") {
+            InputSpec::Stdin
+        } else {
+            if inputs.iter().any(|i| *i == "-") {
+                return Err(clap::Error::with_description(
+                    r#""-" must be the only argument"#,
+                    clap::ErrorKind::InvalidValue));
+            }
+            InputSpec::Files(inputs.iter().map(PathBuf::from).collect())
+        }
+    };
+    
     let options = Options {
         pattern: matches.value_of("pattern").expect("pattern").to_string(),
-        input: matches.value_of_os("input").map(|input| match input {
-          path if path == "-" => InputSpec::Stdin,
-          path => InputSpec::File(PathBuf::from(path)),
-        }),
         regex: matches.is_present("regex"),
         case_insensitive: matches.is_present("case-insensitive"),
         whole_word: matches.is_present("whole-word"),
@@ -211,7 +221,7 @@ EXIT STATUS:
             } else if matches.is_present("print-filename-per-line") {
                 PrintFilename::PerLine
             } else {
-                PrintFilename::No
+                PrintFilename::PerFile
             },
         smart_branches: !matches.is_present("no-smart-branches"),
         preprocessor: value_t!(matches, "preprocessor", Preprocessor)?,

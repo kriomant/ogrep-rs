@@ -2,6 +2,7 @@ use super::*;
 use super::options::*;
 
 use regex::Regex;
+use std::path::Path;
 
 use std::fmt::Write as FmtWrite;
 
@@ -19,7 +20,6 @@ use std::fmt::Write as FmtWrite;
 fn default_options() -> Options {
     Options {
         pattern: String::new(),
-        input: Some(InputSpec::Stdin),
         regex: false,
         case_insensitive: false,
         whole_word: false,
@@ -399,4 +399,54 @@ fn test_children_breaks() {
           ~
           o foo
           o   bar");
+}
+
+/// Tests that stdin is read when no inputs are given and there is
+/// no 'use-git-grep' option.
+#[test]
+fn test_options_empty_args_is_stdin() {
+    let args = &["foo"];
+    let (input, _opts) = options::parse_arguments(args.iter().map(OsString::from)).unwrap();
+    assert!(matches!(input, InputSpec::Stdin));
+}
+
+/// Tests that explicit stdin input ("-") is parsed.
+#[test]
+fn test_options_explicit_stdin_arg() {
+    let args = &["foo", "-"];
+    let (input, _opts) = options::parse_arguments(args.iter().map(OsString::from)).unwrap();
+    assert!(matches!(input, InputSpec::Stdin));
+}
+
+/// Tests that explicit stdin input ("-") must be the only provided input.
+#[test]
+#[should_panic(expected="must be the only argument")]
+fn test_options_explicit_stdin_arg_must_be_alone() {
+    let args = &["foo", "-", "a"];
+    let _ = options::parse_arguments(args.iter().map(OsString::from)).unwrap();
+}
+
+/// Tests that explicit stdin input ("-") must be the only provided input.
+#[test]
+fn test_options_file_inputs() {
+    let args = &["foo", "a", "b"];
+    let (input, _opts) = options::parse_arguments(args.iter().map(OsString::from)).unwrap();
+    assert!(matches!(input,
+                     InputSpec::Files(f) if f == &[Path::new("a"), Path::new("b")]));
+}
+
+#[test]
+fn test_options_git_grep_input() {
+    let args = &["--use-git-grep", "foo", "a", "b"];
+    let (input, _opts) = options::parse_arguments(args.iter().map(OsString::from)).unwrap();
+    assert!(matches!(input,
+                     InputSpec::GitGrep(a) if a == &[OsStr::new("a"), OsStr::new("b")]));
+}
+
+#[test]
+fn test_options_git_grep_empty_input() {
+    let args = &["--use-git-grep", "foo"];
+    let (input, _opts) = options::parse_arguments(args.iter().map(OsString::from)).unwrap();
+    assert!(matches!(input,
+                     InputSpec::GitGrep(a) if a.is_empty()));
 }
